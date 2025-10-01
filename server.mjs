@@ -62,7 +62,6 @@ function startGame(room){
   room.turnIdx = 0;
   room.dice = null;
   room.lastRolls = {};
-  // DO NOT clear tokens without reinitializing:
   ensureTokens(room);
   console.log(`[${now()}] startGame room=${room.id} tokens:`, Object.fromEntries(
     COLORS.map(c => [c, room.tokens[c]?.length || 0])
@@ -114,14 +113,14 @@ function captureIfAllowed(room, color, destP){
 }
 
 function hasAnyMove(room, color){
-  ensureTokens(room); // safety: make sure tokens exist before checking
+  ensureTokens(room);
   const toks = room.tokens[color] || [];
   if (canLeaveBase(room, color)) return true;
   return toks.some(tok => tok.t === "path" && (tok.p + room.dice) <= MAX_LANE);
 }
 
 function tryMove(room, player, tokenIdx){
-  ensureTokens(room); // safety
+  ensureTokens(room);
   const color = player.color;
   const tok = room.tokens[color]?.[tokenIdx];
   if (!tok) return false;
@@ -262,7 +261,6 @@ wss.on("connection", (ws) => {
 
       ws._roomId = rid; ws._playerId = player.id;
 
-      // Ensure tokens exist even while waiting
       ensureTokens(room);
       console.log(`[${now()}] join room=${rid} players=${room.players.length} colors=${room.players.map(p=>p.color).join(',')}`);
       ws.send(JSON.stringify({ type:"joined", you:{ id:player.id, name:player.name, color:player.color, bot:false }, room: snapshot(room) }));
