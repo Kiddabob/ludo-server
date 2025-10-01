@@ -1,7 +1,4 @@
-// Ludo Online (3-player) — WebSocket Server with simple AI bots
-// Run:  node server.js
-// Env:  Node 18+ (or 16 + ws)
-
+// Ludo Online (3-player) — WebSocket Server with simple AI bots + last-rolls + roll guard
 import http from 'http';
 import { WebSocketServer } from 'ws';
 import { randomBytes } from 'crypto';
@@ -9,27 +6,26 @@ import { randomBytes } from 'crypto';
 const PORT = process.env.PORT || 8080;
 
 /** Game constants **/
-const COLORS = ['red', 'green', 'blue']; // enforced 3 players
-const TRACK_LEN = 52;                    // ring length
-const START_OFFSETS = { red: 0, green: 17, blue: 34 }; // spaced for 3 players
+const COLORS = ['red', 'green', 'blue'];
+const TRACK_LEN = 52;
+const START_OFFSETS = { red: 0, green: 17, blue: 34 };
 const TOKENS_PER_PLAYER = 4;
-
-// safe squares (cannot capture on them), include each color's start square
 const SAFE_SQUARES = new Set(Object.values(START_OFFSETS));
 
 /** In-memory rooms **/
-const rooms = new Map(); // roomId -> room
+const rooms = new Map();
 
 function makeRoom() {
   const id = randomBytes(3).toString('hex');
   const room = {
     id,
     players: [], // {id, ws|null, color, name, bot?:true}
-    status: 'waiting', // 'waiting' | 'playing' | 'finished'
+    status: 'waiting',
     turnIdx: 0,
     dice: null,
-    board: {},  // color -> [pos,..] length 4 ; pos = -1 (base) | 0..51 | 'home'
-    homes: {},  // color -> count home
+    board: {},  // color -> [pos,..] ; pos = -1 | 0..51 | 'home'
+    homes: {},  // color -> count
+    lastRolls: {}, // color -> last die value
     botTimer: null,
     createdAt: Date.now(),
   };
@@ -49,18 +45,17 @@ function serializeRoom(room) {
     status: room.status,
     turnIdx: room.turnIdx,
     dice: room.dice,
-    players: room.players.map(p => ({
-      id: p.id, color: p.color, name: p.name, bot: !!p.bot
-    })),
+    players: room.players.map(p => ({ id: p.id, color: p.color, name: p.name, bot: !!p.bot })),
     board: room.board,
     homes: room.homes,
+    lastRolls: room.lastRolls,
   };
 }
 
 function broadcast(room, type, payload) {
   const msg = JSON.stringify({ type, ...payload });
   for (const p of room.players) {
-    if (!p.ws) continue; // bots have no websocket
+    if (!p.ws) continue;
     try { p.ws.send(msg); } catch {}
   }
 }
@@ -100,7 +95,7 @@ function captureIfAny(room, color, destTile) {
     const arr = room.board[c];
     if (!arr) continue;
     for (let i = 0; i < arr.length; i++) {
-      if (arr[i] === destTile) arr[i] = -1; // back to base
+      if (arr[i] === destTile) arr[i] = -1;
     }
   }
 }
@@ -109,7 +104,6 @@ function applyMove(room, color, tokenIdx, steps) {
   const arr = room.board[color];
   let pos = arr[tokenIdx];
 
-  // spawn from base
   if (pos === -1) {
     if (steps !== 6 || !canSpawn(room, color)) return false;
     const start = START_OFFSETS[color];
@@ -118,7 +112,6 @@ function applyMove(room, color, tokenIdx, steps) {
     return true;
   }
 
-  // move on ring; exact-landing home at start after >=1 loop
   const start = START_OFFSETS[color];
   const relFromStart = (pos - start + TRACK_LEN) % TRACK_LEN;
   const newRel = relFromStart + steps;
@@ -154,11 +147,13 @@ function validMoves(room, color, dice) {
 function maybeRunBotTurn(room) {
   const cp = currentPlayer(room);
   if (!cp || !cp.bot || room.status !== 'playing') return;
-  if (room.botTimer) return; // already scheduled
+  if (room.botTimer) return;
 
-  // schedule: roll -> decide -> move (small delays for UX)
   room.botTimer = setTimeout(() => {
+    // ROLL
+    if (room.dice !== null) return; // guard: shouldn't happen
     room.dice = rollDie();
+    room.lastRolls[cp.color] = room.dice;
     broadcast(room, 'rolled', { dice: room.dice, room: serializeRoom(room) });
 
     const dice = room.dice;
@@ -166,18 +161,15 @@ function maybeRunBotTurn(room) {
     const options = validMoves(room, color, dice);
 
     if (options.length === 0) {
-      // ALWAYS pass if no legal moves (prevents stalls even on a 6)
       nextTurn(room);
       room.dice = null;
       broadcast(room, 'state', { room: serializeRoom(room) });
       clearTimeout(room.botTimer); room.botTimer = null;
-      // chain if next player is also a bot
       maybeRunBotTurn(room);
       return;
     }
 
-    // simple policy:
-    // if 6 and spawn possible → spawn; else move the token farthest along
+    // Pick move
     let tokenIdx = options[0];
     if (dice === 6) {
       const spawnIdx = options.find(i => room.board[color][i] === -1);
@@ -185,10 +177,8 @@ function maybeRunBotTurn(room) {
     } else {
       tokenIdx = options.reduce((best, i) => {
         const start = START_OFFSETS[color];
-        const rel = room.board[color][i] === -1 ? -1
-          : (room.board[color][i] - start + TRACK_LEN) % TRACK_LEN;
-        const bestRel = room.board[color][best] === -1 ? -1
-          : (room.board[color][best] - start + TRACK_LEN) % TRACK_LEN;
+        const rel = room.board[color][i] === -1 ? -1 : (room.board[color][i] - start + TRACK_LEN) % TRACK_LEN;
+        const bestRel = room.board[color][best] === -1 ? -1 : (room.board[color][best] - start + TRACK_LEN) % TRACK_LEN;
         return rel > bestRel ? i : best;
       }, options[0]);
     }
@@ -207,10 +197,9 @@ function maybeRunBotTurn(room) {
       room.dice = null;
       broadcast(room, 'state', { room: serializeRoom(room) });
       clearTimeout(room.botTimer); room.botTimer = null;
-      // chain next bot if applicable
       maybeRunBotTurn(room);
-    }, 600);
-  }, 600);
+    }, 500);
+  }, 500);
 }
 
 /* ------------ HTTP + WebSocket server ------------ */
@@ -223,80 +212,49 @@ const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws) => {
   let room = null;
-  let me = null; // {id,color,name,ws}
+  let me = null;
 
   ws.on('message', (raw) => {
     let msg; try { msg = JSON.parse(raw); } catch { return; }
 
-    // join {roomId?, name?}
     if (msg.type === 'join') {
       room = getOrCreateRoom(msg.roomId);
-      if (room.players.length >= 3) {
-        ws.send(JSON.stringify({ type: 'error', error: 'Room full' }));
-        return;
-      }
+      if (room.players.length >= 3) { ws.send(JSON.stringify({ type: 'error', error: 'Room full' })); return; }
 
-      // assign next available color
       const used = new Set(room.players.map(p => p.color));
       const color = COLORS.find(c => !used.has(c));
-      if (!color) {
-        ws.send(JSON.stringify({ type: 'error', error: 'Room full' }));
-        return;
-      }
+      if (!color) { ws.send(JSON.stringify({ type: 'error', error: 'Room full' })); return; }
 
       me = { id: randomBytes(6).toString('hex'), color, name: msg.name || color, ws };
       room.players.push(me);
       initPlayerState(room, color);
 
       if (room.players.length === 3 && room.status === 'waiting') {
-        room.status = 'playing';
-        room.turnIdx = 0;
-        room.dice = null;
+        room.status = 'playing'; room.turnIdx = 0; room.dice = null;
       }
 
-      ws.send(JSON.stringify({
-        type: 'joined',
-        room: serializeRoom(room),
-        you: { id: me.id, color: me.color, name: me.name }
-      }));
+      ws.send(JSON.stringify({ type: 'joined', room: serializeRoom(room), you: { id: me.id, color: me.color, name: me.name } }));
       broadcast(room, 'state', { room: serializeRoom(room) });
       maybeRunBotTurn(room);
       return;
     }
 
-    // add a bot player
     if (msg.type === 'addBot') {
       room = room || getOrCreateRoom(msg.roomId);
-      if (room.players.length >= 3) {
-        ws.send(JSON.stringify({ type: 'error', error: 'Room full' }));
-        return;
-      }
+      if (room.players.length >= 3) { ws.send(JSON.stringify({ type: 'error', error: 'Room full' })); return; }
       const used = new Set(room.players.map(p => p.color));
       const color = COLORS.find(c => !used.has(c));
-      if (!color) {
-        ws.send(JSON.stringify({ type: 'error', error: 'No color available' }));
-        return;
-      }
-      const bot = {
-        id: randomBytes(6).toString('hex'),
-        color,
-        name: msg.name || `CPU-${color}`,
-        ws: null,
-        bot: true
-      };
+      if (!color) { ws.send(JSON.stringify({ type: 'error', error: 'No color available' })); return; }
+      const bot = { id: randomBytes(6).toString('hex'), color, name: msg.name || `CPU-${color}`, ws: null, bot: true };
       room.players.push(bot);
       initPlayerState(room, color);
 
-      if (room.players.length === 3 && room.status === 'waiting') {
-        room.status = 'playing';
-        room.turnIdx = 0;
-      }
+      if (room.players.length === 3 && room.status === 'waiting') { room.status = 'playing'; room.turnIdx = 0; }
       broadcast(room, 'state', { room: serializeRoom(room) });
       maybeRunBotTurn(room);
       return;
     }
 
-    // remove any bot (or a specific color if provided)
     if (msg.type === 'removeBot') {
       if (!room) return;
       const idx = room.players.findIndex(p => p.bot && (!msg.color || p.color === msg.color));
@@ -304,6 +262,7 @@ wss.on('connection', (ws) => {
         const [p] = room.players.splice(idx, 1);
         delete room.board[p.color];
         delete room.homes[p.color];
+        delete room.lastRolls[p.color];
         if (room.turnIdx >= room.players.length) room.turnIdx = 0;
         if (room.players.length < 3 && room.status === 'playing') room.status = 'waiting';
         broadcast(room, 'state', { room: serializeRoom(room) });
@@ -311,13 +270,15 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    // roll (AUTO-PASS when no legal moves)
+    // roll with guard + auto-pass
     if (msg.type === 'roll') {
       if (!room || !me) return;
       if (room.status !== 'playing') return;
       if (currentPlayer(room).id !== me.id) return;
+      if (room.dice !== null) return; // NEW: can't re-roll until you move/pass
 
       room.dice = rollDie();
+      room.lastRolls[me.color] = room.dice;
       broadcast(room, 'rolled', { dice: room.dice, room: serializeRoom(room) });
 
       const opts = validMoves(room, me.color, room.dice);
@@ -330,19 +291,15 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    // move {tokenIdx}
     if (msg.type === 'move') {
       if (!room || !me) return;
       if (room.status !== 'playing') return;
       if (currentPlayer(room).id !== me.id) return;
       const d = room.dice;
-      if (!d) return; // must roll first
+      if (!d) return;
 
       const ok = applyMove(room, me.color, msg.tokenIdx, d);
-      if (!ok) {
-        ws.send(JSON.stringify({ type: 'error', error: 'Invalid move' }));
-        return;
-      }
+      if (!ok) { ws.send(JSON.stringify({ type: 'error', error: 'Invalid move' })); return; }
 
       if (allHome(room, me.color)) {
         room.status = 'finished';
@@ -357,9 +314,7 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    if (msg.type === 'ping') {
-      ws.send(JSON.stringify({ type: 'pong' }));
-    }
+    if (msg.type === 'ping') { ws.send(JSON.stringify({ type: 'pong' })); }
   });
 
   ws.on('close', () => {
@@ -375,6 +330,4 @@ wss.on('connection', (ws) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log('Ludo server listening on :' + PORT);
-});
+server.listen(PORT, () => { console.log('Ludo server listening on :' + PORT); });
