@@ -1,319 +1,450 @@
-// Ludo Online — Cross-board rules server (3 players)
-// Node 18+.  npm i ws
-import http from "http";
-import { WebSocketServer } from "ws";
-import { randomBytes } from "crypto";
+// Minimal Ludo (3-player) server for ws:// / wss://
+// Works with the client index.html we’ve been iterating on.
+//
+// Run locally:   node server.js
+// PORT comes from env (Render) or defaults to 10000
 
-const PORT = process.env.PORT || 8080;
+const http = require("http");
+const WebSocket = require("ws");
+const crypto = require("crypto");
 
-// --- Game constants (classic) ---
-const COLORS = ["red", "green", "blue"];          // 3 players; yellow shown only in UI
-const TOKENS = 4;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 10000;
+
+// ----- Helpers --------------------------------------------------------------
+
+const uid = () => crypto.randomUUID();
+const now = () => new Date().toISOString().replace('T',' ').split('.')[0];
+
+function pickColor(taken) {
+  const order = ["red", "green", "blue"]; // 3 players
+  for (const c of order) if (!taken.includes(c)) return c;
+  return null;
+}
+
+function deepClone(x){ return JSON.parse(JSON.stringify(x)); }
+
+function randInt(n){ return Math.floor(Math.random()*n)+1; }
+
+// Ring & rules expected by the client
+const START_IDX = { red: 0, green: 13, yellow: 26, blue: 39 };
+// Only 3 colors are in play
+const COLORS = ["red", "green", "blue"];
+const SAFE_TILES = new Set([0,8,13,21,26,34,39,47]); // on ring (0..51)
 const RING_LEN = 52;
-const LANE_LEN = 6;
-const START = { red: 0, green: 13, yellow: 26, blue: 39 };
-const SAFE_RING = new Set([0, 8, 13, 21, 26, 34, 39, 47]); // starts + rosettes
+const MAX_LANE = 57; // 52..57, reaching 57 means Home
 
-// token shape: { t: 'base' } | { t:'path', p: 0..57 } | { t:'home' }
-// path index p is steps from START[color]:
-//   0..51 -> ring; 52..57 -> private home lane; 57 is HOME.
-const MAX_PATH = RING_LEN + LANE_LEN - 1; // 57
+function onRingIndex(color, p) {
+  // token.p is steps from its color's start
+  return (START_IDX[color] + p) % RING_LEN;
+}
 
-const rooms = new Map();
+function laneStep(color, p) {
+  // convert p>=52 (lane) to lane position 0..5 then 57 is home
+  return p - 52; // 0..5
+}
 
-function makeRoom() {
-  const id = randomBytes(3).toString("hex");
-  const room = {
+// ----- Data -----------------------------------------------------------------
+
+const rooms = new Map(); // roomId -> room
+
+function newRoom(id) {
+  return {
     id,
-    players: [],                         // {id, ws|null, color, name, bot?:true}
-    status: "waiting",                   // 'waiting' | 'playing' | 'finished'
+    status: "waiting", // "waiting" | "playing" | "finished"
+    players: [],       // [{id,name,color,bot:true?}]
+    tokens: {},        // color -> [{t:"base"|"path"|"home", p:number}]
     turnIdx: 0,
-    dice: null,                          // die value while a move is pending
-    lastRolls: {},                       // color -> n
-    tokens: {},                          // color -> token[4]
-    botTimer: null,
+    dice: null,
+    lastRolls: {},     // color -> last rolled number
+    createdAt: Date.now()
   };
-  rooms.set(id, room);
-  return room;
 }
 
-function getOrCreateRoom(roomId) {
-  if (!roomId) return makeRoom();
-  return rooms.get(roomId) || makeRoom();
+function ensureTokens(room) {
+  // Create 4 tokens per color in base
+  for (const c of COLORS) {
+    if (!room.players.find(p => p.color === c)) continue;
+    if (!room.tokens[c]) room.tokens[c] = [];
+    if (room.tokens[c].length === 0) {
+      room.tokens[c] = [
+        { t: "base", p: 0 },
+        { t: "base", p: 0 },
+        { t: "base", p: 0 },
+        { t: "base", p: 0 }
+      ];
+    }
+  }
 }
 
-function initColor(room, color) {
-  room.tokens[color] = Array.from({ length: TOKENS }, () => ({ t: "base" }));
+// ----- Networking ------------------------------------------------------------
+
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end("Ludo server is running.\n");
+});
+
+const wss = new WebSocket.Server({ server });
+
+function broadcast(room, msg) {
+  const data = JSON.stringify(msg);
+  for (const p of room.players) {
+    if (p._ws && p._ws.readyState === WebSocket.OPEN) {
+      p._ws.send(data);
+    }
+  }
 }
 
-function serialize(room) {
+function snapshot(room) {
+  // Do not leak ws objects
+  const players = room.players.map(p => ({
+    id: p.id, name: p.name, color: p.color, bot: !!p.bot
+  }));
   return {
     id: room.id,
     status: room.status,
+    players,
+    tokens: deepClone(room.tokens),
     turnIdx: room.turnIdx,
     dice: room.dice,
-    players: room.players.map(p => ({ id: p.id, color: p.color, name: p.name, bot: !!p.bot })),
-    tokens: room.tokens,
-    lastRolls: room.lastRolls,
+    lastRolls: deepClone(room.lastRolls)
   };
 }
-const current = r => r.players[r.turnIdx];
-const nextTurn = r => { r.turnIdx = (r.turnIdx + 1) % r.players.length; r.dice = null; };
-const rollDie = () => 1 + Math.floor(Math.random() * 6);
 
-function ringTileFor(color, pathIndex) {
-  return pathIndex < RING_LEN ? (START[color] + pathIndex) % RING_LEN : null;
+function sendJoined(ws, room, you) {
+  const msg = {
+    type: "joined",
+    you: { id: you.id, name: you.name, color: you.color, bot: !!you.bot },
+    room: snapshot(room)
+  };
+  ws.send(JSON.stringify(msg));
 }
-function isHomeIndex(pathIndex) { return pathIndex === MAX_PATH; }
 
-// --- ring occupancy for capture checks ---
-function ringOccupancy(room) {
-  const map = new Map(); // ringIdx -> [{color, tokenIdx}]
-  for (const p of room.players) {
-    const arr = room.tokens[p.color] || [];
-    arr.forEach((tok, i) => {
-      if (tok.t === "path" && tok.p < RING_LEN) {
-        const ring = ringTileFor(p.color, tok.p);
-        if (!map.has(ring)) map.set(ring, []);
-        map.get(ring).push({ color: p.color, tokenIdx: i });
+function sendState(room) {
+  broadcast(room, { type: "state", room: snapshot(room) });
+}
+
+// ----- Game mechanics --------------------------------------------------------
+
+function startGame(room) {
+  room.status = "playing";
+  room.turnIdx = 0;
+  room.dice = null;
+  room.lastRolls = {};
+  room.tokens = {};
+  ensureTokens(room);
+  sendState(room);
+  maybeDriveBot(room);
+}
+
+function nextTurn(room, { extraTurn=false } = {}) {
+  if (!extraTurn) {
+    room.turnIdx = (room.turnIdx + 1) % room.players.length;
+  }
+  room.dice = null;
+  sendState(room);
+  maybeDriveBot(room);
+}
+
+function canLeaveBase(room, color) {
+  // Leaving base requires dice === 6 and start tile not blocked by your own "blockade" (two pieces on same ring tile).
+  if (room.dice !== 6) return false;
+  const startTile = onRingIndex(color, 0);
+  const occ = occupantsOnRing(room, startTile);
+  // same-color blockade prevents entering; one same-color piece is fine (stacking is allowed)
+  const sameColorCount = occ.filter(o => o.color === color).length;
+  return sameColorCount < 2;
+}
+
+function occupantsOnRing(room, ringTileIdx) {
+  const res = [];
+  for (const c of COLORS) {
+    const arr = room.tokens[c];
+    if (!arr) continue;
+    arr.forEach((tok, idx) => {
+      if (tok.t === "path" && tok.p < 52) {
+        if (onRingIndex(c, tok.p) === ringTileIdx) res.push({ color: c, idx });
       }
     });
   }
-  return map;
+  return res;
 }
 
-function captureAt(room, ringTile, landingColor) {
-  if (SAFE_RING.has(ringTile)) return; // safe tiles cannot be captured
-  const occ = ringOccupancy(room).get(ringTile) || [];
-  for (const { color, tokenIdx } of occ) {
-    if (color !== landingColor) room.tokens[color][tokenIdx] = { t: "base" };
-  }
-}
+function captureIfAllowed(room, color, destP) {
+  // Only when still on ring (<52) and dest ring tile not safe
+  if (destP >= 52) return;
+  const ringIdx = onRingIndex(color, destP);
+  if (SAFE_TILES.has(ringIdx)) return; // safe tile => no capture
 
-function validMoves(room, color, dice) {
-  const moves = [];
-  const arr = room.tokens[color] || [];
-  for (let i = 0; i < arr.length; i++) {
-    const tok = arr[i];
-    if (tok.t === "home") continue;
-    if (tok.t === "base") {
-      if (dice === 6) moves.push(i); // spawn to path p=0
-    } else if (tok.t === "path") {
-      const dest = tok.p + dice;
-      if (dest <= MAX_PATH) moves.push(i); // exact to 57 required
+  const victims = occupantsOnRing(room, ringIdx)
+    .filter(o => o.color !== color);
+
+  // Send all victims back to base
+  for (const v of victims) {
+    const tok = room.tokens[v.color][v.idx];
+    if (tok) {
+      tok.t = "base";
+      tok.p = 0;
     }
   }
-  return moves;
 }
 
-function applyMove(room, color, tokenIdx, dice) {
-  const tok = room.tokens[color][tokenIdx];
+function hasAnyMove(room, color) {
+  const toks = room.tokens[color] || [];
+  // leave base?
+  if (canLeaveBase(room, color)) return true;
+  // move along path?
+  return toks.some(tok => tok.t === "path" && (tok.p + room.dice) <= MAX_LANE);
+}
 
-  // spawn
+function tryMove(room, player, tokenIdx) {
+  const color = player.color;
+  const tok = room.tokens[color]?.[tokenIdx];
+  if (!tok) return false;
+
+  // base -> start on dice=6
   if (tok.t === "base") {
-    if (dice !== 6) return false;
-    const tile = ringTileFor(color, 0);
-    captureAt(room, tile, color);
-    room.tokens[color][tokenIdx] = { t: "path", p: 0 };
+    if (!canLeaveBase(room, color)) return false;
+    tok.t = "path";
+    tok.p = 0; // on your start ring tile
+    captureIfAllowed(room, color, tok.p);
     return true;
   }
 
+  if (tok.t === "home") return false;
+
   if (tok.t === "path") {
-    const dest = tok.p + dice;
-    if (dest > MAX_PATH) return false; // must be exact to enter home
+    const target = tok.p + room.dice;
+    if (target > MAX_LANE) return false;
 
-    if (dest < RING_LEN) {
-      // still on ring
-      const ring = ringTileFor(color, dest);
-      captureAt(room, ring, color);
-      room.tokens[color][tokenIdx] = { t: "path", p: dest };
-      return true;
+    // Move with capture if still on ring
+    captureIfAllowed(room, color, target);
+    tok.p = target;
+    if (tok.p === MAX_LANE) {
+      tok.t = "home";
+      tok.p = MAX_LANE;
     }
-
-    if (dest === MAX_PATH) {
-      room.tokens[color][tokenIdx] = { t: "home" };
-      return true;
-    }
-
-    // inside private lane (52..56)
-    room.tokens[color][tokenIdx] = { t: "path", p: dest };
     return true;
   }
 
   return false;
 }
 
-function allHome(room, color) {
-  return (room.tokens[color] || []).every(t => t.t === "home");
+function checkWin(room) {
+  // 4 home tokens = win
+  for (const p of room.players) {
+    const arr = room.tokens[p.color] || [];
+    const homeCount = arr.filter(t => t.t === "home").length;
+    if (homeCount === 4) {
+      room.status = "finished";
+      sendState(room);
+      broadcast(room, { type: "finished", winner: p.color, room: snapshot(room) });
+      return true;
+    }
+  }
+  return false;
 }
 
-// --- bots (simple policy) ---
-function maybeRunBotTurn(room) {
-  const cp = current(room);
-  if (!cp || !cp.bot || room.status !== "playing") return;
-  if (room.botTimer) return;
+function doRoll(room, player) {
+  if (room.status !== "playing") return;
+  if (room.players[room.turnIdx].id !== player.id) return;
+  if (room.dice != null) return; // already rolled
 
-  room.botTimer = setTimeout(() => {
-    if (room.dice !== null) return;
-    room.dice = rollDie();
-    room.lastRolls[cp.color] = room.dice;
-    broadcast(room, "rolled", { dice: room.dice, room: serialize(room) });
+  const roll = randInt(6);
+  room.dice = roll;
+  room.lastRolls[player.color] = roll;
+  sendState(room);
 
-    const options = validMoves(room, cp.color, room.dice);
-    if (options.length === 0) {
-      nextTurn(room);
-      broadcast(room, "state", { room: serialize(room) });
-      clearTimeout(room.botTimer); room.botTimer = null;
-      return maybeRunBotTurn(room);
+  // If player has no move with this roll, pass immediately.
+  if (!hasAnyMove(room, player.color)) {
+    setTimeout(() => nextTurn(room, { extraTurn: false }), 350);
+    return;
+  }
+
+  // If bot, decide and move.
+  maybeDriveBot(room);
+}
+
+function doMove(room, player, tokenIdx) {
+  if (room.status !== "playing") return;
+  if (room.players[room.turnIdx].id !== player.id) return;
+  if (room.dice == null) return;
+
+  const moved = tryMove(room, player, tokenIdx);
+  if (!moved) return;
+
+  const extra = room.dice === 6;
+  if (checkWin(room)) return;
+
+  nextTurn(room, { extraTurn: extra });
+}
+
+// Basic bot logic: prefer base -> start on 6, else move the furthest token that can reach home, else first movable.
+function botPickMove(room, color) {
+  const toks = room.tokens[color] || [];
+  if (room.dice === 6) {
+    // prefer leave base if possible
+    const startable = toks.findIndex(t => t.t === "base");
+    if (startable !== -1 && canLeaveBase(room, color)) return startable;
+  }
+  // try to finish (reach home)
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (t.t === "path" && t.p + room.dice === MAX_LANE) return i;
+  }
+  // first legal path move
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (t.t === "path" && t.p + room.dice <= MAX_LANE) return i;
+  }
+  // fallback: if dice is 6 and we couldn't leave base because of blockade, no move
+  return -1;
+}
+
+function maybeDriveBot(room) {
+  if (room.status !== "playing") return;
+  const p = room.players[room.turnIdx];
+  if (!p || !p.bot) return;
+
+  // Bot timing
+  const think = (ms) => new Promise(r => setTimeout(r, ms));
+
+  (async () => {
+    await think(350);
+    if (room.dice == null) {
+      // roll
+      doRoll(room, p);
+      await think(300);
     }
+    if (room.status !== "playing") return;
 
-    // If 6, prefer spawning; otherwise move the farthest-along token.
-    let idx = options[0];
-    if (room.dice === 6) {
-      const spawn = options.find(i => room.tokens[cp.color][i].t === "base");
-      if (spawn !== undefined) idx = spawn;
+    const idx = botPickMove(room, p.color);
+    if (idx >= 0) {
+      doMove(room, p, idx);
     } else {
-      idx = options.reduce((best, i) => {
-        const bp = room.tokens[cp.color][best].t === "path" ? room.tokens[cp.color][best].p : -1;
-        const ip = room.tokens[cp.color][i].t === "path" ? room.tokens[cp.color][i].p : -1;
-        return ip > bp ? i : best;
-      }, options[0]);
+      // no legal move, pass turn
+      nextTurn(room, { extraTurn: false });
     }
-
-    setTimeout(() => {
-      applyMove(room, cp.color, idx, room.dice);
-      if (allHome(room, cp.color)) {
-        room.status = "finished";
-        broadcast(room, "finished", { winner: cp.color, room: serialize(room) });
-        clearTimeout(room.botTimer); room.botTimer = null;
-        return;
-      }
-      if (room.dice !== 6) nextTurn(room);
-      room.dice = null;
-      broadcast(room, "state", { room: serialize(room) });
-      clearTimeout(room.botTimer); room.botTimer = null;
-      maybeRunBotTurn(room);
-    }, 400);
-  }, 400);
+  })();
 }
 
-// --- networking ---
-const server = http.createServer((_, res) => {
-  res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end("Ludo cross server OK\n");
-});
-const wss = new WebSocketServer({ server });
-
-function broadcast(room, type, payload) {
-  const msg = JSON.stringify({ type, ...payload });
-  for (const p of room.players) if (p.ws) try { p.ws.send(msg); } catch {}
-}
+// ----- WebSocket handlers ----------------------------------------------------
 
 wss.on("connection", (ws) => {
-  let room = null, me = null;
+  ws.on("message", (data) => {
+    let msg = {};
+    try { msg = JSON.parse(data.toString()); } catch { return; }
 
-  ws.on("message", (raw) => {
-    let msg; try { msg = JSON.parse(raw); } catch { return; }
+    const type = msg.type;
 
-    if (msg.type === "join") {
-      room = getOrCreateRoom(msg.roomId);
-      if (room.players.length >= 3) return ws.send(JSON.stringify({ type: "error", error: "Room full" }));
+    if (type === "join") {
+      let rid = msg.roomId || uid().slice(0,5);
+      if (!rooms.has(rid)) rooms.set(rid, newRoom(rid));
+      const room = rooms.get(rid);
 
-      const used = new Set(room.players.map(p => p.color));
-      const color = COLORS.find(c => !used.has(c));
-      if (!color) return ws.send(JSON.stringify({ type: "error", error: "Room full" }));
+      // Assign color
+      const taken = room.players.map(p => p.color);
+      const color = pickColor(taken);
+      if (!color) {
+        ws.send(JSON.stringify({ type: "error", error: "Room is full" }));
+        return;
+      }
 
-      me = { id: randomBytes(6).toString("hex"), color, name: msg.name || color, ws };
-      room.players.push(me);
-      if (!room.tokens[color]) initColor(room, color);
-      if (room.players.length === 3 && room.status === "waiting") { room.status = "playing"; room.turnIdx = 0; }
+      const player = {
+        id: uid(),
+        name: (msg.name || color),
+        color,
+        bot: false,
+        _ws: ws
+      };
+      room.players.push(player);
 
-      ws.send(JSON.stringify({ type: "joined", room: serialize(room), you: { id: me.id, color: me.color, name: me.name } }));
-      broadcast(room, "state", { room: serialize(room) });
-      maybeRunBotTurn(room);
+      // Bind WS -> room/player
+      ws._roomId = rid;
+      ws._playerId = player.id;
+
+      sendJoined(ws, room, player);
+      sendState(room);
+
+      // Start when we have 3 players
+      if (room.players.length === 3 && room.status === "waiting") {
+        startGame(room);
+      }
       return;
     }
 
-    if (msg.type === "addBot") {
-      room = room || getOrCreateRoom(msg.roomId);
-      if (room.players.length >= 3) return ws.send(JSON.stringify({ type: "error", error: "Room full" }));
-      const used = new Set(room.players.map(p => p.color));
-      const color = COLORS.find(c => !used.has(c));
-      if (!color) return ws.send(JSON.stringify({ type: "error", error: "No color available" }));
-      const bot = { id: randomBytes(6).toString("hex"), color, name: `CPU-${color}`, ws: null, bot: true };
+    // Everything below needs a bound room
+    const rid = ws._roomId;
+    const pid = ws._playerId;
+    if (!rid || !rooms.has(rid)) return;
+    const room = rooms.get(rid);
+    const player = room.players.find(p => p.id === pid);
+    if (!player) return;
+
+    if (type === "roll") {
+      doRoll(room, player);
+      return;
+    }
+
+    if (type === "move") {
+      const idx = Number(msg.tokenIdx);
+      if (Number.isInteger(idx)) doMove(room, player, idx);
+      return;
+    }
+
+    if (type === "addBot") {
+      if (room.players.length >= 3 || room.status !== "waiting") return;
+      const color = pickColor(room.players.map(p => p.color));
+      if (!color) return;
+      const bot = { id: uid(), name: `CPU-${color}`, color, bot: true, _ws: null };
       room.players.push(bot);
-      if (!room.tokens[color]) initColor(room, color);
-      if (room.players.length === 3 && room.status === "waiting") { room.status = "playing"; room.turnIdx = 0; }
-      broadcast(room, "state", { room: serialize(room) });
-      maybeRunBotTurn(room);
-      return;
-    }
-
-    if (msg.type === "removeBot") {
-      if (!room) return;
-      const idx = room.players.findIndex(p => p.bot && (!msg.color || p.color === msg.color));
-      if (idx !== -1) {
-        const [p] = room.players.splice(idx, 1);
-        delete room.tokens[p.color];
-        delete room.lastRolls[p.color];
-        if (room.turnIdx >= room.players.length) room.turnIdx = 0;
-        if (room.players.length < 3 && room.status === "playing") room.status = "waiting";
-        broadcast(room, "state", { room: serialize(room) });
+      sendState(room);
+      if (room.players.length === 3 && room.status === "waiting") {
+        startGame(room);
       }
       return;
     }
 
-    if (msg.type === "roll") {
-      if (!room || !me) return;
-      if (room.status !== "playing") return;
-      if (current(room).id !== me.id) return;
-      if (room.dice !== null) return; // guard
-
-      room.dice = rollDie();
-      room.lastRolls[me.color] = room.dice;
-      broadcast(room, "rolled", { dice: room.dice, room: serialize(room) });
-
-      const opts = validMoves(room, me.color, room.dice);
-      if (opts.length === 0) {
-        nextTurn(room);
-        broadcast(room, "state", { room: serialize(room) });
-        maybeRunBotTurn(room);
+    if (type === "removeBot") {
+      // remove last bot if waiting
+      if (room.status !== "waiting") return;
+      for (let i = room.players.length - 1; i >= 0; i--) {
+        if (room.players[i].bot) {
+          room.players.splice(i, 1);
+          break;
+        }
       }
-      return;
-    }
-
-    if (msg.type === "move") {
-      if (!room || !me) return;
-      if (room.status !== "playing") return;
-      if (current(room).id !== me.id) return;
-      const d = room.dice; if (!d) return;
-
-      const ok = applyMove(room, me.color, msg.tokenIdx, d);
-      if (!ok) return ws.send(JSON.stringify({ type: "error", error: "Invalid move" }));
-
-      if (allHome(room, me.color)) {
-        room.status = "finished";
-        return broadcast(room, "finished", { winner: me.color, room: serialize(room) });
-      }
-
-      if (d !== 6) nextTurn(room);
-      room.dice = null;
-      broadcast(room, "state", { room: serialize(room) });
-      maybeRunBotTurn(room);
+      sendState(room);
       return;
     }
   });
 
   ws.on("close", () => {
-    if (!room || !me) return;
-    room.players = room.players.filter(p => p.id !== me.id);
-    if (room.players.length === 0) rooms.delete(room.id);
-    else {
-      if (room.turnIdx >= room.players.length) room.turnIdx = 0;
-      broadcast(room, "state", { room: serialize(room) });
-      maybeRunBotTurn(room);
+    const rid = ws._roomId;
+    const pid = ws._playerId;
+    if (!rid || !rooms.has(rid)) return;
+    const room = rooms.get(rid);
+    // Remove player
+    const idx = room.players.findIndex(p => p.id === pid);
+    if (idx !== -1) room.players.splice(idx, 1);
+
+    // If room empty, delete it
+    if (room.players.length === 0) {
+      rooms.delete(rid);
+      return;
     }
+
+    // If playing and current player left, normalize turn
+    if (room.status === "playing") {
+      if (room.turnIdx >= room.players.length) room.turnIdx = 0;
+      room.dice = null; // reset pending roll
+    }
+
+    sendState(room);
   });
 });
 
-server.listen(PORT, () => console.log("Ludo cross server listening on :" + PORT));
+// ----- Start HTTP/WS --------------------------------------------------------
+
+server.listen(PORT, () => {
+  console.log(`[${now()}] Ludo server listening on :${PORT}`);
+});
