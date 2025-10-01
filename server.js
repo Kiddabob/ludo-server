@@ -10,15 +10,14 @@ const PORT = process.env.PORT || 8080;
 
 /** Game constants **/
 const COLORS = ['red', 'green', 'blue']; // enforced 3 players
-const TRACK_LEN = 52; // ring length
-// spaced starts for 3 players
-const START_OFFSETS = { red: 0, green: 17, blue: 34 };
+const TRACK_LEN = 52;                    // ring length
+const START_OFFSETS = { red: 0, green: 17, blue: 34 }; // spaced for 3 players
 const TOKENS_PER_PLAYER = 4;
 
 // safe squares (cannot capture on them), include each color's start square
 const SAFE_SQUARES = new Set(Object.values(START_OFFSETS));
 
-/** In-memory storage **/
+/** In-memory rooms **/
 const rooms = new Map(); // roomId -> room
 
 function makeRoom() {
@@ -32,7 +31,7 @@ function makeRoom() {
     board: {},  // color -> [pos,..] length 4 ; pos = -1 (base) | 0..51 | 'home'
     homes: {},  // color -> count home
     botTimer: null,
-    createdAt: Date.now()
+    createdAt: Date.now(),
   };
   rooms.set(id, room);
   return room;
@@ -50,7 +49,9 @@ function serializeRoom(room) {
     status: room.status,
     turnIdx: room.turnIdx,
     dice: room.dice,
-    players: room.players.map(p => ({ id: p.id, color: p.color, name: p.name, bot: !!p.bot })),
+    players: room.players.map(p => ({
+      id: p.id, color: p.color, name: p.name, bot: !!p.bot
+    })),
     board: room.board,
     homes: room.homes,
   };
@@ -108,6 +109,7 @@ function applyMove(room, color, tokenIdx, steps) {
   const arr = room.board[color];
   let pos = arr[tokenIdx];
 
+  // spawn from base
   if (pos === -1) {
     if (steps !== 6 || !canSpawn(room, color)) return false;
     const start = START_OFFSETS[color];
@@ -116,12 +118,12 @@ function applyMove(room, color, tokenIdx, steps) {
     return true;
   }
 
+  // move on ring; exact-landing home at start after >=1 loop
   const start = START_OFFSETS[color];
   const relFromStart = (pos - start + TRACK_LEN) % TRACK_LEN;
   const newRel = relFromStart + steps;
   const destTile = tileIndexFor(color, newRel % TRACK_LEN);
 
-  // exact-landing home rule (MVP)
   if (destTile === start && newRel >= TRACK_LEN) {
     arr[tokenIdx] = 'home';
     room.homes[color]++;
@@ -154,7 +156,7 @@ function maybeRunBotTurn(room) {
   if (!cp || !cp.bot || room.status !== 'playing') return;
   if (room.botTimer) return; // already scheduled
 
-  // schedule: roll -> decide -> move (with tiny delays for UX)
+  // schedule: roll -> decide -> move (small delays for UX)
   room.botTimer = setTimeout(() => {
     room.dice = rollDie();
     broadcast(room, 'rolled', { dice: room.dice, room: serializeRoom(room) });
@@ -164,7 +166,8 @@ function maybeRunBotTurn(room) {
     const options = validMoves(room, color, dice);
 
     if (options.length === 0) {
-      if (dice !== 6) nextTurn(room);
+      // ALWAYS pass if no legal moves (prevents stalls even on a 6)
+      nextTurn(room);
       room.dice = null;
       broadcast(room, 'state', { room: serializeRoom(room) });
       clearTimeout(room.botTimer); room.botTimer = null;
@@ -174,7 +177,7 @@ function maybeRunBotTurn(room) {
     }
 
     // simple policy:
-    // if 6 and spawn possible → spawn; else move the token farthest from start
+    // if 6 and spawn possible → spawn; else move the token farthest along
     let tokenIdx = options[0];
     if (dice === 6) {
       const spawnIdx = options.find(i => room.board[color][i] === -1);
@@ -204,13 +207,13 @@ function maybeRunBotTurn(room) {
       room.dice = null;
       broadcast(room, 'state', { room: serializeRoom(room) });
       clearTimeout(room.botTimer); room.botTimer = null;
-      // chain next bot turn if applicable
+      // chain next bot if applicable
       maybeRunBotTurn(room);
     }, 600);
   }, 600);
 }
 
-/* ------------ Server ------------ */
+/* ------------ HTTP + WebSocket server ------------ */
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Ludo server OK\n');
@@ -236,7 +239,10 @@ wss.on('connection', (ws) => {
       // assign next available color
       const used = new Set(room.players.map(p => p.color));
       const color = COLORS.find(c => !used.has(c));
-      if (!color) { ws.send(JSON.stringify({ type: 'error', error: 'Room full' })); return; }
+      if (!color) {
+        ws.send(JSON.stringify({ type: 'error', error: 'Room full' }));
+        return;
+      }
 
       me = { id: randomBytes(6).toString('hex'), color, name: msg.name || color, ws };
       room.players.push(me);
@@ -258,14 +264,26 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    // add/remove bots
+    // add a bot player
     if (msg.type === 'addBot') {
       room = room || getOrCreateRoom(msg.roomId);
-      if (room.players.length >= 3) { ws.send(JSON.stringify({ type: 'error', error: 'Room full' })); return; }
+      if (room.players.length >= 3) {
+        ws.send(JSON.stringify({ type: 'error', error: 'Room full' }));
+        return;
+      }
       const used = new Set(room.players.map(p => p.color));
       const color = COLORS.find(c => !used.has(c));
-      if (!color) { ws.send(JSON.stringify({ type: 'error', error: 'No color available' })); return; }
-      const bot = { id: randomBytes(6).toString('hex'), color, name: msg.name || `CPU-${color}`, ws: null, bot: true };
+      if (!color) {
+        ws.send(JSON.stringify({ type: 'error', error: 'No color available' }));
+        return;
+      }
+      const bot = {
+        id: randomBytes(6).toString('hex'),
+        color,
+        name: msg.name || `CPU-${color}`,
+        ws: null,
+        bot: true
+      };
       room.players.push(bot);
       initPlayerState(room, color);
 
@@ -278,6 +296,7 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    // remove any bot (or a specific color if provided)
     if (msg.type === 'removeBot') {
       if (!room) return;
       const idx = room.players.findIndex(p => p.bot && (!msg.color || p.color === msg.color));
@@ -292,13 +311,22 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    // roll
+    // roll (AUTO-PASS when no legal moves)
     if (msg.type === 'roll') {
       if (!room || !me) return;
       if (room.status !== 'playing') return;
       if (currentPlayer(room).id !== me.id) return;
+
       room.dice = rollDie();
       broadcast(room, 'rolled', { dice: room.dice, room: serializeRoom(room) });
+
+      const opts = validMoves(room, me.color, room.dice);
+      if (opts.length === 0) {
+        nextTurn(room);
+        room.dice = null;
+        broadcast(room, 'state', { room: serializeRoom(room) });
+        maybeRunBotTurn(room);
+      }
       return;
     }
 
@@ -309,9 +337,12 @@ wss.on('connection', (ws) => {
       if (currentPlayer(room).id !== me.id) return;
       const d = room.dice;
       if (!d) return; // must roll first
-      const tokenIdx = msg.tokenIdx;
-      const ok = applyMove(room, me.color, tokenIdx, d);
-      if (!ok) { ws.send(JSON.stringify({ type: 'error', error: 'Invalid move' })); return; }
+
+      const ok = applyMove(room, me.color, msg.tokenIdx, d);
+      if (!ok) {
+        ws.send(JSON.stringify({ type: 'error', error: 'Invalid move' }));
+        return;
+      }
 
       if (allHome(room, me.color)) {
         room.status = 'finished';
