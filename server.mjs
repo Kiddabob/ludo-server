@@ -210,21 +210,48 @@ function botPickMove(room, color){
   return -1;
 }
 
-function maybeDriveBot(room){
-  if (room.status!=="playing") return;
+function maybeDriveBot(room) {
+  if (room.status !== "playing") return;
+
   const p = room.players[room.turnIdx];
   if (!p || !p.bot) return;
-  const think = (ms)=>new Promise(r=>setTimeout(r,ms));
-  (async ()=>{
-    await think(300);
-    if (room.dice == null) doRoll(room, p);
-    await think(250);
-    if (room.status!=="playing") return;
+
+  // --- Guard against overlapping bot timers ----------------------------
+  // Each bot turn gets a unique marker; if turn changes, older routines bail.
+  const marker = Symbol("botTurn");
+  room._botTurnMarker = marker;
+
+  const stillMyTurn = () =>
+    room.status === "playing" &&
+    room._botTurnMarker === marker &&
+    room.players[room.turnIdx] &&
+    room.players[room.turnIdx].id === p.id;
+
+  const think = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  (async () => {
+    await think(350);
+    if (!stillMyTurn()) return;
+
+    // Roll if needed
+    if (room.dice == null) {
+      doRoll(room, p);
+      await think(300);
+      if (!stillMyTurn()) return;
+    }
+
+    // Pick and make a move (or pass)
     const idx = botPickMove(room, p.color);
-    if (idx>=0) doMove(room, p, idx);
-    else nextTurn(room, { extraTurn:false });
+    if (!stillMyTurn()) return;
+
+    if (idx >= 0) {
+      doMove(room, p, idx);
+    } else {
+      nextTurn(room, { extraTurn: false });
+    }
   })();
 }
+
 
 // HTTP (with /debug)
 const server = http.createServer((req, res) => {
