@@ -1,12 +1,8 @@
 {
   "name": "ludo-server",
-  "version": "1.0.0",
+  "private": true,
   "type": "module",
   "engines": { "node": ">=18" },
-  "scripts": {
-    "start": "node server.mjs"
-  },
-  "dependencies": {
-    "ws": "^8.18.0"
-  }
+  "dependencies": { "ws": "^8.18.0" },
+  "scripts": { "start": "node server.mjs" }
 }
