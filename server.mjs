@@ -228,14 +228,14 @@ function maybeDriveBot(room) {
   const stillValid = () => room._botTick === myTick && room.status === "playing" && room.players[room.turnIdx]?.bot;
 
   (async () => {
-    await sleep(350);
+    await sleep(500);
     if (!stillValid()) return;
 
     if (room.dice == null) {
       // roll
       const cur = room.players[room.turnIdx];
       if (cur && cur.id === p.id) doRoll(room, p);
-      await sleep(280);
+      await sleep(420);
       if (!stillValid()) return;
     }
 
