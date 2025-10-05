@@ -1,324 +1,306 @@
 // server.mjs
-import http from "node:http";
-import WebSocket, { WebSocketServer } from "ws";
-import crypto from "node:crypto";
+import { WebSocketServer } from 'ws';
+import { randomBytes } from 'crypto';
 
-const PORT = process.env.PORT ? Number(process.env.PORT) : 10000;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 8080;
+const wss = new WebSocketServer({ port: PORT });
 
-const uid = () => crypto.randomUUID();
-const now = () => new Date().toISOString().replace("T"," ").split(".")[0];
+/* ---------- Game constants ---------- */
+const COLORS = ['red','green','yellow','blue'];
+const MAX_PLAYERS = 4;
+const MIN_PLAYERS = 2;
 
-function deepClone(x){ return JSON.parse(JSON.stringify(x)); }
-function randInt(n){ return Math.floor(Math.random()*n)+1; }
+const START_OF = { red:0, green:13, yellow:26, blue:39 };
+const SAFE_STEPS = new Set([0,8,13,21,26,34,39,47]); // ring steps (relative to red start)
 
-const START_IDX = { red: 0, green: 13, yellow: 26, blue: 39 };
-const COLORS = ["red", "green", "blue"];
-const SAFE_TILES = new Set([0,8,13,21,26,34,39,47]);
-const RING_LEN = 52;
-const MAX_LANE = 57; // 52..57, reaching 57 means Home
+/* ---------- Rooms ---------- */
+const ROOMS = new Map();
 
-function onRingIndex(color, p) {
-  return (START_IDX[color] + p) % RING_LEN;
+function id(n=5){
+  return randomBytes(n).toString('hex').slice(0,n);
 }
 
-const rooms = new Map();
-
-function newRoom(id) {
-  return {
-    id, status: "waiting",
-    players: [],       // [{id,name,color,bot,_ws}]
-    tokens: {},        // color -> [{t:"base"|"path"|"home", p:number}]
+function getOrCreateRoom(roomId){
+  if (roomId && ROOMS.has(roomId)) return ROOMS.get(roomId);
+  const r = {
+    id: roomId || id(5),
+    hostId: null,
+    status: 'waiting',
+    players: [],          // [{id,name,color,bot?}]
+    tokens: {},           // color -> [ {t:'base'|'path'|'home', p?}, x4 ]
     turnIdx: 0,
     dice: null,
-    lastRolls: {},
-    createdAt: Date.now(),
-    _botTick: 0,       // monotonic counter to de-dupe bot loops
+    lastRolls: {},        // color -> last rolled value
   };
+  ROOMS.set(r.id, r);
+  return r;
 }
 
-function ensureTokens(room) {
-  for (const c of COLORS) {
-    if (!room.players.find(p => p.color === c)) continue;
-    if (!room.tokens[c] || room.tokens[c].length === 0) {
-      room.tokens[c] = [
-        { t:"base", p:0 }, { t:"base", p:0 }, { t:"base", p:0 }, { t:"base", p:0 }
-      ];
+function nextFreeColor(room){
+  for (const c of COLORS){
+    if (!room.players.some(p => p.color===c)) return c;
+  }
+  return null;
+}
+
+function playerFor(ws, room){
+  return room.players.find(p => p.id === ws._pid);
+}
+
+function broadcast(room, msg){
+  wss.clients.forEach(c=>{
+    if (c.readyState===1 && c._roomId===room.id){
+      c.send(JSON.stringify(msg));
     }
-  }
+  });
 }
 
-const server = http.createServer((req, res) => {
-  res.writeHead(200);
-  res.end("Ludo server is running.\n");
-});
-const wss = new WebSocketServer({ server });
-
-function broadcast(room, msg) {
-  const data = JSON.stringify(msg);
-  for (const p of room.players) {
-    if (p._ws && p._ws.readyState === WebSocket.OPEN) p._ws.send(data);
-  }
-}
-function snapshot(room) {
-  const players = room.players.map(p => ({ id:p.id, name:p.name, color:p.color, bot:!!p.bot }));
-  return {
-    id: room.id, status: room.status, players,
-    tokens: deepClone(room.tokens),
-    turnIdx: room.turnIdx, dice: room.dice,
-    lastRolls: deepClone(room.lastRolls),
-  };
-}
-function sendState(room) { broadcast(room, { type:"state", room: snapshot(room) }); }
-function sendJoined(ws, room, you) {
-  ws.send(JSON.stringify({ type:"joined", you: {id:you.id,name:you.name,color:you.color,bot:!!you.bot}, room: snapshot(room) }));
+function sendState(room){
+  broadcast(room, {type:'state', room});
 }
 
-function startGame(room) {
-  room.status = "playing";
-  room.turnIdx = 0;
-  room.dice = null;
-  room.lastRolls = {};
-  room.tokens = {};
-  ensureTokens(room);
-  sendState(room);
-  maybeDriveBot(room); // kick off if bot starts
+function packJoined(ws, room){
+  const you = playerFor(ws, room);
+  ws.send(JSON.stringify({type:'joined', you, room}));
 }
 
-function occupantsOnRing(room, ringTileIdx) {
-  const res = [];
-  for (const c of COLORS) {
-    const arr = room.tokens[c];
-    if (!arr) continue;
-    arr.forEach((tok, idx) => {
-      if (tok.t === "path" && tok.p < 52) {
-        if (onRingIndex(c, tok.p) === ringTileIdx) res.push({ color: c, idx });
-      }
-    });
-  }
-  return res;
-}
+/* ---------- Connection ---------- */
+wss.on('connection', (ws)=>{
+  ws._pid = id(6);
 
-function canLeaveBase(room, color) {
-  if (room.dice !== 6) return false;
-  const startTile = onRingIndex(color, 0);
-  const occ = occupantsOnRing(room, startTile);
-  const sameColorCount = occ.filter(o => o.color === color).length;
-  return sameColorCount < 2; // can’t if own blockade
-}
-
-function captureIfAllowed(room, color, destP) {
-  if (destP >= 52) return;
-  const ringIdx = onRingIndex(color, destP);
-  if (SAFE_TILES.has(ringIdx)) return;
-  const victims = occupantsOnRing(room, ringIdx).filter(o => o.color !== color);
-  for (const v of victims) {
-    const tok = room.tokens[v.color][v.idx];
-    if (tok) { tok.t = "base"; tok.p = 0; }
-  }
-}
-
-function hasAnyMove(room, color) {
-  const toks = room.tokens[color] || [];
-  if (canLeaveBase(room, color)) return true;
-  return toks.some(tok => tok.t === "path" && (tok.p + room.dice) <= MAX_LANE);
-}
-
-function tryMove(room, player, tokenIdx) {
-  const color = player.color;
-  const tok = room.tokens[color]?.[tokenIdx];
-  if (!tok) return false;
-
-  if (tok.t === "base") {
-    if (!canLeaveBase(room, color)) return false;
-    tok.t = "path"; tok.p = 0;
-    captureIfAllowed(room, color, tok.p);
-    return true;
-  }
-  if (tok.t === "home") return false;
-
-  if (tok.t === "path") {
-    const target = tok.p + room.dice;
-    if (target > MAX_LANE) return false;
-    captureIfAllowed(room, color, target);
-    tok.p = target;
-    if (tok.p === MAX_LANE) { tok.t = "home"; tok.p = MAX_LANE; }
-    return true;
-  }
-  return false;
-}
-
-function checkWin(room) {
-  for (const p of room.players) {
-    const arr = room.tokens[p.color] || [];
-    const homeCount = arr.filter(t => t.t === "home").length;
-    if (homeCount === 4) {
-      room.status = "finished";
-      sendState(room);
-      broadcast(room, { type:"finished", winner: p.color, room: snapshot(room) });
-      return true;
-    }
-  }
-  return false;
-}
-
-function nextTurn(room, { extraTurn=false } = {}) {
-  if (!extraTurn) room.turnIdx = (room.turnIdx + 1) % room.players.length;
-  room.dice = null;
-  room._botTick++; // invalidate any pending bot loops
-  sendState(room);
-  maybeDriveBot(room);
-}
-
-function doRoll(room, player) {
-  if (room.status !== "playing") return;
-  if (room.players[room.turnIdx].id !== player.id) return; // not your turn
-  if (room.dice != null) return; // already rolled
-
-  const roll = randInt(6);
-  room.dice = roll;
-  room.lastRolls[player.color] = roll;
-  sendState(room);
-
-  // if no move, auto pass after a short beat
-  if (!hasAnyMove(room, player.color)) {
-    setTimeout(() => nextTurn(room, { extraTurn:false }), 350);
-    return;
-  }
-  maybeDriveBot(room);
-}
-
-function doMove(room, player, tokenIdx) {
-  if (room.status !== "playing") return;
-  if (room.players[room.turnIdx].id !== player.id) return;
-  if (room.dice == null) return;
-
-  const moved = tryMove(room, player, tokenIdx);
-  if (!moved) return;
-
-  const extra = room.dice === 6;
-  if (checkWin(room)) return;
-  nextTurn(room, { extraTurn: extra });
-}
-
-function botPickMove(room, color) {
-  const toks = room.tokens[color] || [];
-  if (room.dice === 6) {
-    const startable = toks.findIndex(t => t.t === "base");
-    if (startable !== -1 && canLeaveBase(room, color)) return startable;
-  }
-  for (let i=0;i<toks.length;i++) {
-    const t = toks[i];
-    if (t.t === "path" && t.p + room.dice === MAX_LANE) return i;
-  }
-  for (let i=0;i<toks.length;i++) {
-    const t = toks[i];
-    if (t.t === "path" && t.p + room.dice <= MAX_LANE) return i;
-  }
-  return -1;
-}
-
-// Idempotent bot driver: checks a snapshot each step
-function maybeDriveBot(room) {
-  if (room.status !== "playing") return;
-  const p = room.players[room.turnIdx];
-  if (!p || !p.bot) return;
-
-  const myTick = ++room._botTick; // own token for this loop
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-  const stillValid = () => room._botTick === myTick && room.status === "playing" && room.players[room.turnIdx]?.bot;
-
-  (async () => {
-    await sleep(500);
-    if (!stillValid()) return;
-
-    if (room.dice == null) {
-      // roll
-      const cur = room.players[room.turnIdx];
-      if (cur && cur.id === p.id) doRoll(room, p);
-      await sleep(420);
-      if (!stillValid()) return;
-    }
-
-    const cur = room.players[room.turnIdx];
-    if (!cur || cur.id !== p.id) return; // turn changed
-    const idx = botPickMove(room, p.color);
-    if (idx >= 0) doMove(room, p, idx);
-    else nextTurn(room, { extraTurn:false });
-  })();
-}
-
-/* ---------- WS ---------- */
-wss.on("connection", (ws) => {
-  ws.on("message", (data) => {
-    let msg = {};
-    try { msg = JSON.parse(data.toString()); } catch { return; }
-    const type = msg.type;
-
-    if (type === "join") {
-      let rid = msg.roomId || uid().slice(0,5);
-      if (!rooms.has(rid)) rooms.set(rid, newRoom(rid));
-      const room = rooms.get(rid);
-
-      const order = ["red","green","blue"];
-      const taken = room.players.map(p => p.color);
-      const color = order.find(c => !taken.includes(c));
-      if (!color) { ws.send(JSON.stringify({type:"error", error:"Room is full"})); return; }
-
-      const player = { id:uid(), name:(msg.name||color), color, bot:false, _ws:ws };
-      room.players.push(player);
-      ws._roomId = rid; ws._playerId = player.id;
-
-      sendJoined(ws, room, player);
-      sendState(room);
-      if (room.players.length === 3 && room.status === "waiting") startGame(room);
-      return;
-    }
-
-    const rid = ws._roomId, pid = ws._playerId;
-    if (!rid || !rooms.has(rid)) return;
-    const room = rooms.get(rid);
-    const player = room.players.find(p => p.id === pid);
-    if (!player) return;
-
-    if (type === "roll") { doRoll(room, player); return; }
-    if (type === "move") {
-      const idx = Number(msg.tokenIdx);
-      if (Number.isInteger(idx)) doMove(room, player, idx);
-      return;
-    }
-    if (type === "addBot") {
-      if (room.players.length >= 3 || room.status !== "waiting") return;
-      const order = ["red","green","blue"];
-      const color = order.find(c => !room.players.some(p => p.color === c));
-      if (!color) return;
-      room.players.push({ id:uid(), name:`CPU-${color}`, color, bot:true, _ws:null });
-      sendState(room);
-      if (room.players.length === 3 && room.status === "waiting") startGame(room);
-      return;
-    }
-    if (type === "removeBot") {
-      if (room.status !== "waiting") return;
-      for (let i=room.players.length-1;i>=0;i--) if (room.players[i].bot){ room.players.splice(i,1); break; }
-      sendState(room);
-      return;
+  ws.on('message', raw=>{
+    let m={}; try{m=JSON.parse(raw.toString())}catch{ return; }
+    try{
+      if (m.type==='join') onJoin(ws, m);
+      else if (m.type==='start') onStart(ws);
+      else if (m.type==='roll') onRoll(ws);
+      else if (m.type==='move') onMove(ws, m);
+      else if (m.type==='addBot') onAddBot(ws);
+      else if (m.type==='removeBot') onRemoveBot(ws);
+    }catch(e){
+      safeSend(ws,{type:'error', error:e.message||String(e)});
     }
   });
 
-  ws.on("close", () => {
-    const rid = ws._roomId, pid = ws._playerId;
-    if (!rid || !rooms.has(rid)) return;
-    const room = rooms.get(rid);
-    const idx = room.players.findIndex(p => p.id === pid);
-    if (idx !== -1) room.players.splice(idx,1);
+  ws.on('close', ()=>{
+    const room = [...ROOMS.values()].find(r => r.players.some(p=>p.id===ws._pid));
+    if (!room) return;
+    // remove player
+    const idx = room.players.findIndex(p=>p.id===ws._pid);
+    if (idx>-1) room.players.splice(idx,1);
+    if (room.players.length===0){ ROOMS.delete(room.id); return; }
 
-    if (room.players.length === 0) { rooms.delete(rid); return; }
-    if (room.status === "playing") {
-      if (room.turnIdx >= room.players.length) room.turnIdx = 0;
-      room.dice = null;
-      room._botTick++; // cancel any in-flight bot loop
+    if (room.hostId===ws._pid){
+      // pass host to first human if present, else any
+      const human = room.players.find(p=>!p.bot);
+      room.hostId = human ? human.id : room.players[0].id;
+    }
+    // if playing and less than 2 players remain, stop
+    if (room.status==='playing' && room.players.length<2){
+      room.status='waiting'; room.dice=null;
     }
     sendState(room);
   });
 });
 
-server.listen(PORT, () => console.log(`[${now()}] Ludo server listening on :${PORT}`));
+function safeSend(ws, o){ try{ws.send(JSON.stringify(o))}catch{} }
+
+/* ---------- Handlers ---------- */
+function onJoin(ws, {roomId, name}){
+  const room = getOrCreateRoom(roomId);
+  ws._roomId = room.id;
+
+  if (!room.hostId) room.hostId = ws._pid; // first joiner is host
+  if (room.players.length >= MAX_PLAYERS) throw new Error('Room full');
+
+  const color = nextFreeColor(room);
+  if (!color) throw new Error('No color available');
+
+  const player = { id: ws._pid, name: name||`Player-${color}`, color };
+  room.players.push(player);
+  // init tokens for color
+  room.tokens[color] = [{t:'base'},{t:'base'},{t:'base'},{t:'base'}];
+
+  packJoined(ws, room);
+  sendState(room);
+}
+
+function onStart(ws){
+  const room = findRoomOf(ws);
+  if (!room) return;
+  if (ws._pid !== room.hostId) throw new Error('Only host can start');
+  if (room.status!=='waiting') return;
+  const n = room.players.length;
+  if (n<MIN_PLAYERS || n>MAX_PLAYERS) throw new Error(`Need ${MIN_PLAYERS}–${MAX_PLAYERS} players`);
+
+  // ensure tokens exist for seated colors
+  for (const p of room.players){
+    if (!room.tokens[p.color]) room.tokens[p.color] = [{t:'base'},{t:'base'},{t:'base'},{t:'base'}];
+  }
+
+  room.status='playing';
+  room.turnIdx=0;
+  room.dice=null;
+  sendState(room);
+}
+
+function onAddBot(ws){
+  const room = findRoomOf(ws); if(!room) return;
+  if (room.players.length>=MAX_PLAYERS) return;
+  const color = nextFreeColor(room); if(!color) return;
+  const bot={ id:id(6), name:`CPU-${color}`, color, bot:true };
+  room.players.push(bot);
+  room.tokens[color] = [{t:'base'},{t:'base'},{t:'base'},{t:'base'}];
+  sendState(room);
+  maybeAutoBotTurn(room);
+}
+
+function onRemoveBot(ws){
+  const room = findRoomOf(ws); if(!room) return;
+  const i = room.players.findIndex(p=>p.bot);
+  if (i>-1){
+    const [rm]=room.players.splice(i,1);
+    delete room.tokens[rm.color];
+    if (room.turnIdx>=room.players.length) room.turnIdx=0;
+    sendState(room);
+  }
+}
+
+function onRoll(ws){
+  const room = findRoomOf(ws); if(!room) return;
+  const p = room.players[room.turnIdx];
+  if (p.id!==ws._pid) return; // not your turn
+  if (room.dice!=null) return; // already rolled
+
+  const v = 1 + Math.floor(Math.random()*6);
+  room.dice = v;
+  room.lastRolls[p.color] = v;
+  sendState(room);
+
+  // For bots, auto-move after short delay
+  if (p.bot) setTimeout(()=>botMove(room), 350);
+}
+
+function legalMoves(room, color, dice){
+  const toks = room.tokens[color];
+  const options = [];
+  for (let i=0;i<4;i++){
+    const t = toks[i];
+    if (t.t==='home') continue;
+    if (t.t==='base'){
+      if (dice===6) options.push({idx:i, to:{t:'path', p:0}});
+      continue;
+    }
+    // path
+    const np = t.p + dice;
+    if (np>57) continue; // overshoot
+    options.push({idx:i, to:{t:'path', p:np}});
+  }
+  return options;
+}
+
+function applyCapture(room, color, step){
+  // step is ring step (0..51) relative to red start, but for other colors we just compare equal steps
+  for (const opp of room.players){
+    if (opp.color===color) continue;
+    const ts = room.tokens[opp.color];
+    for (const tok of ts){
+      if (tok.t==='path' && tok.p<52){
+        // map opp token p to ring step
+        const oppStep = (START_OF[opp.color] + tok.p) % 52;
+        if (oppStep===step){
+          // send back to base (unless safe tile)
+          const safe = SAFE_STEPS.has(step);
+          if (!safe){
+            tok.t='base'; delete tok.p;
+          }
+        }
+      }
+    }
+  }
+}
+
+function onMove(ws, {tokenIdx}){
+  const room = findRoomOf(ws); if(!room) return;
+  const pl = room.players[room.turnIdx]; if (pl.id!==ws._pid) return;
+  const dice = room.dice; if (dice==null) return;
+
+  const opts = legalMoves(room, pl.color, dice);
+  const choice = opts.find(o=>o.idx===Number(tokenIdx));
+  if (!choice) return;
+
+  const tok = room.tokens[pl.color][choice.idx];
+
+  // apply movement
+  if (tok.t==='base' && choice.to.t==='path' && choice.to.p===0){
+    tok.t='path'; tok.p=0;
+    // capture if landing step not safe and opponent present
+    applyCapture(room, pl.color, START_OF[pl.color] % 52);
+  }else{
+    tok.p = choice.to.p;
+    if (tok.p<52){
+      const step = (START_OF[pl.color] + tok.p) % 52;
+      applyCapture(room, pl.color, step);
+    }else if (tok.p===57){
+      tok.t='home'; delete tok.p;
+    }
+  }
+
+  // turn logic: roll again on 6 (if at least one legal move existed), else next
+  const rolledSix = dice===6;
+  room.dice=null;
+
+  // win check
+  const allHome = room.tokens[pl.color].every(t=>t.t==='home');
+  if (allHome){
+    room.status='finished';
+    broadcast(room, {type:'finished', winner:pl.color, room});
+    return;
+  }
+
+  if (rolledSix){
+    // same player continues
+  }else{
+    room.turnIdx = (room.turnIdx+1) % room.players.length;
+  }
+  sendState(room);
+
+  maybeAutoBotTurn(room);
+}
+
+/* ---------- Helpers ---------- */
+function botMove(room){
+  const p = room.players[room.turnIdx];
+  if (!p || !p.bot) return;
+  const dice = room.dice;
+  const options = legalMoves(room, p.color, dice);
+  // naive: prefer finishing, else move the furthest token, else first
+  let pick = options.find(o=>o.to.p===57) || options.sort((a,b)=> (b.to.p??0)-(a.to.p??0))[0];
+  if (!pick) { // no legal move; pass turn
+    room.dice=null;
+    room.turnIdx = (room.turnIdx+1) % room.players.length;
+    sendState(room);
+    return maybeAutoBotTurn(room);
+  }
+  // apply as if client clicked
+  onMove({ _pid:p.id }, { tokenIdx: pick.idx });
+}
+
+function maybeAutoBotTurn(room){
+  const p = room.players[room.turnIdx];
+  if (room.status!=='playing' || !p?.bot) return;
+  // auto-press roll
+  setTimeout(()=>{
+    if (room.status!=='playing') return;
+    const fakeWs = { _pid:p.id };
+    onRoll(fakeWs);
+  }, 350);
+}
+
+function findRoomOf(ws){
+  if (!ws._roomId) return null;
+  return ROOMS.get(ws._roomId) || null;
+}
+
+/* ---------- Boot ---------- */
+console.log(`Ludo server up on :${PORT}`);
