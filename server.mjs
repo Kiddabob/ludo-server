@@ -59,6 +59,13 @@ function sendState(room){
   broadcast(room, {type:'state', room});
 }
 
+/* ---------- Logging helpers ---------- */
+function roomLog(room, text){
+  const line = `[${new Date().toLocaleTimeString()}] ${text}`;
+  console.log(`[${room.id}] ${text}`);
+  broadcast(room, { type:'log', line });
+}
+
 function packJoined(ws, room){
   const you = playerFor(ws, room);
   ws.send(JSON.stringify({type:'joined', you, room}));
@@ -87,17 +94,24 @@ wss.on('connection', (ws)=>{
     if (!room) return;
     // remove player
     const idx = room.players.findIndex(p=>p.id===ws._pid);
-    if (idx>-1) room.players.splice(idx,1);
+    if (idx>-1){
+      const left = room.players[idx];
+      room.players.splice(idx,1);
+      roomLog(room, `${left.name||left.color} left the room`);
+    }
     if (room.players.length===0){ ROOMS.delete(room.id); return; }
 
     if (room.hostId===ws._pid){
       // pass host to first human if present, else any
       const human = room.players.find(p=>!p.bot);
       room.hostId = human ? human.id : room.players[0].id;
+      const newHost = room.players.find(p=>p.id===room.hostId);
+      roomLog(room, `Host left — new host is ${newHost?.name||newHost?.color}`);
     }
     // if playing and less than 2 players remain, stop
     if (room.status==='playing' && room.players.length<2){
       room.status='waiting'; room.dice=null;
+      roomLog(room, `Not enough players — returning to waiting state`);
     }
     sendState(room);
   });
@@ -116,13 +130,14 @@ function onJoin(ws, {roomId, name}){
   const color = nextFreeColor(room);
   if (!color) throw new Error('No color available');
 
-  const player = { id: ws._pid, name: name||`Player-${color}`, color };
+  const player = { id: ws._pid, name: (name||'').trim() || `Player-${color}`, color };
   room.players.push(player);
   // init tokens for color
   room.tokens[color] = [{t:'base'},{t:'base'},{t:'base'},{t:'base'}];
 
   packJoined(ws, room);
   sendState(room);
+  roomLog(room, `${player.name} joined as ${color}`);
 }
 
 function onStart(ws){
@@ -142,7 +157,8 @@ function onStart(ws){
   room.turnIdx=0;
   room.dice=null;
   sendState(room);
-  // NEW: if first player is a bot, kick off its turn
+  const first = room.players[0];
+  roomLog(room, `Game started — ${first.name||first.color} (${first.color}) to roll`);
   maybeAutoBotTurn(room);
 }
 
@@ -154,6 +170,7 @@ function onAddBot(ws){
   room.players.push(bot);
   room.tokens[color] = [{t:'base'},{t:'base'},{t:'base'},{t:'base'}];
   sendState(room);
+  roomLog(room, `Added bot ${bot.name} (${color})`);
   maybeAutoBotTurn(room);
 }
 
@@ -165,6 +182,7 @@ function onRemoveBot(ws){
     delete room.tokens[rm.color];
     if (room.turnIdx>=room.players.length) room.turnIdx=0;
     sendState(room);
+    roomLog(room, `Removed bot ${rm.name} (${rm.color})`);
   }
 }
 
@@ -178,13 +196,13 @@ function onRoll(ws){
   room.dice = v;
   room.lastRolls[p.color] = v;
   sendState(room);
+  roomLog(room, `${p.name||p.color} rolled a ${v}`);
 
   // For bots, auto-move after short delay
   if (p.bot) setTimeout(()=>botMove(room), 350);
 
-  // NEW: if a bot is up and dice is null later (e.g., after human's move/skip),
-  // this keeps the loop moving.
-  setTimeout(()=>maybeAutoBotTurn(room), 400);
+  // Safety: in case dice resets without a move (edge cases), try again
+  setTimeout(()=>maybeAutoBotTurn(room), 500);
 }
 
 function legalMoves(room, color, dice){
@@ -206,19 +224,18 @@ function legalMoves(room, color, dice){
 }
 
 function applyCapture(room, color, step){
-  // step is ring step (0..51) relative to red start, but for other colors we just compare equal steps
+  // step is ring step (0..51)
   for (const opp of room.players){
     if (opp.color===color) continue;
     const ts = room.tokens[opp.color];
     for (const tok of ts){
       if (tok.t==='path' && tok.p<52){
-        // map opp token p to ring step
         const oppStep = (START_OF[opp.color] + tok.p) % 52;
         if (oppStep===step){
-          // send back to base (unless safe tile)
           const safe = SAFE_STEPS.has(step);
           if (!safe){
             tok.t='base'; delete tok.p;
+            roomLog(room, `${opp.name||opp.color} token captured by ${color} at step ${step}`);
           }
         }
       }
@@ -233,26 +250,30 @@ function onMove(ws, {tokenIdx}){
 
   const opts = legalMoves(room, pl.color, dice);
   const choice = opts.find(o=>o.idx===Number(tokenIdx));
-  if (!choice) return;
+  if (!choice) {
+    roomLog(room, `${pl.name||pl.color} tried an illegal move with token ${tokenIdx}`);
+    return;
+  }
 
   const tok = room.tokens[pl.color][choice.idx];
 
   // apply movement
   if (tok.t==='base' && choice.to.t==='path' && choice.to.p===0){
     tok.t='path'; tok.p=0;
-    // capture if landing step not safe and opponent present (start step)
+    roomLog(room, `${pl.name||pl.color} moved token ${choice.idx} out of base`);
     applyCapture(room, pl.color, START_OF[pl.color] % 52);
   }else{
     tok.p = choice.to.p;
     if (tok.p<52){
       const step = (START_OF[pl.color] + tok.p) % 52;
+      roomLog(room, `${pl.name||pl.color} moved token ${choice.idx} to step ${tok.p} (ring ${step})`);
       applyCapture(room, pl.color, step);
     }else if (tok.p===57){
       tok.t='home'; delete tok.p;
+      roomLog(room, `${pl.name||pl.color} brought token ${choice.idx} HOME`);
     }
   }
 
-  // turn logic: roll again on 6 (if at least one legal move existed), else next
   const rolledSix = dice===6;
   room.dice=null;
 
@@ -261,13 +282,18 @@ function onMove(ws, {tokenIdx}){
   if (allHome){
     room.status='finished';
     broadcast(room, {type:'finished', winner:pl.color, room});
+    roomLog(room, `🎉 ${pl.name||pl.color} WINS!`);
     return;
   }
 
   if (!rolledSix){
     room.turnIdx = (room.turnIdx+1) % room.players.length;
+  }else{
+    roomLog(room, `${pl.name||pl.color} rolled a 6 — plays again`);
   }
+  const nxt = room.players[room.turnIdx];
   sendState(room);
+  roomLog(room, `Turn: ${nxt.name||nxt.color} (${nxt.color})`);
 
   maybeAutoBotTurn(room);
 }
@@ -278,15 +304,18 @@ function botMove(room){
   if (!p || !p.bot) return;
   const dice = room.dice;
   const options = legalMoves(room, p.color, dice);
-  // prefer finishing, else move the furthest token, else none -> pass
   let pick = options.find(o=>o.to.p===57) || options.sort((a,b)=> (b.to.p??0)-(a.to.p??0))[0];
   if (!pick) { // no legal move; pass turn
+    roomLog(room, `${p.name} has no legal moves — turn passes`);
     room.dice=null;
     room.turnIdx = (room.turnIdx+1) % room.players.length;
     sendState(room);
+    const nxt = room.players[room.turnIdx];
+    roomLog(room, `Turn: ${nxt.name||nxt.color} (${nxt.color})`);
     return maybeAutoBotTurn(room);
   }
   // apply as if client clicked
+  roomLog(room, `${p.name} auto-moves token ${pick.idx}`);
   onMove({ _pid:p.id }, { tokenIdx: pick.idx });
 }
 
@@ -296,10 +325,10 @@ function maybeAutoBotTurn(room){
   // If dice hasn't been rolled yet, auto-roll for the bot
   if (room.dice==null){
     const fakeWs = { _pid:p.id };
-    setTimeout(()=>onRoll(fakeWs), 200);
+    setTimeout(()=>onRoll(fakeWs), 250);
   }else{
     // dice is up -> bot will move shortly
-    setTimeout(()=>botMove(room), 200);
+    setTimeout(()=>botMove(room), 250);
   }
 }
 
