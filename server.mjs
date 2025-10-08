@@ -198,10 +198,22 @@ function onRoll(ws){
   sendState(room);
   roomLog(room, `${p.name||p.color} rolled a ${v}`);
 
+  // If this player (human or bot) has no legal moves, auto-pass the turn.
+  const options = legalMoves(room, p.color, v);
+  if (options.length === 0) {
+    roomLog(room, `${p.name||p.color} has no legal moves — turn passes`);
+    room.dice = null;
+    room.turnIdx = (room.turnIdx + 1) % room.players.length;
+    sendState(room);
+    const nxt = room.players[room.turnIdx];
+    roomLog(room, `Turn: ${nxt.name||nxt.color} (${nxt.color})`);
+    return maybeAutoBotTurn(room);
+  }
+
   // For bots, auto-move after short delay
   if (p.bot) setTimeout(()=>botMove(room), 350);
 
-  // Safety: in case dice resets without a move (edge cases), try again
+  // Safety: try to keep bot flow alive if something resets dice
   setTimeout(()=>maybeAutoBotTurn(room), 500);
 }
 
@@ -322,12 +334,10 @@ function botMove(room){
 function maybeAutoBotTurn(room){
   const p = room.players[room.turnIdx];
   if (room.status!=='playing' || !p?.bot) return;
-  // If dice hasn't been rolled yet, auto-roll for the bot
   if (room.dice==null){
     const fakeWs = { _pid:p.id };
     setTimeout(()=>onRoll(fakeWs), 250);
   }else{
-    // dice is up -> bot will move shortly
     setTimeout(()=>botMove(room), 250);
   }
 }
