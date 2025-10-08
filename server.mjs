@@ -142,6 +142,8 @@ function onStart(ws){
   room.turnIdx=0;
   room.dice=null;
   sendState(room);
+  // NEW: if first player is a bot, kick off its turn
+  maybeAutoBotTurn(room);
 }
 
 function onAddBot(ws){
@@ -169,7 +171,7 @@ function onRemoveBot(ws){
 function onRoll(ws){
   const room = findRoomOf(ws); if(!room) return;
   const p = room.players[room.turnIdx];
-  if (p.id!==ws._pid) return; // not your turn
+  if (!p || p.id!==ws._pid) return; // not your turn
   if (room.dice!=null) return; // already rolled
 
   const v = 1 + Math.floor(Math.random()*6);
@@ -179,6 +181,10 @@ function onRoll(ws){
 
   // For bots, auto-move after short delay
   if (p.bot) setTimeout(()=>botMove(room), 350);
+
+  // NEW: if a bot is up and dice is null later (e.g., after human's move/skip),
+  // this keeps the loop moving.
+  setTimeout(()=>maybeAutoBotTurn(room), 400);
 }
 
 function legalMoves(room, color, dice){
@@ -222,7 +228,7 @@ function applyCapture(room, color, step){
 
 function onMove(ws, {tokenIdx}){
   const room = findRoomOf(ws); if(!room) return;
-  const pl = room.players[room.turnIdx]; if (pl.id!==ws._pid) return;
+  const pl = room.players[room.turnIdx]; if (!pl || pl.id!==ws._pid) return;
   const dice = room.dice; if (dice==null) return;
 
   const opts = legalMoves(room, pl.color, dice);
@@ -234,7 +240,7 @@ function onMove(ws, {tokenIdx}){
   // apply movement
   if (tok.t==='base' && choice.to.t==='path' && choice.to.p===0){
     tok.t='path'; tok.p=0;
-    // capture if landing step not safe and opponent present
+    // capture if landing step not safe and opponent present (start step)
     applyCapture(room, pl.color, START_OF[pl.color] % 52);
   }else{
     tok.p = choice.to.p;
@@ -258,9 +264,7 @@ function onMove(ws, {tokenIdx}){
     return;
   }
 
-  if (rolledSix){
-    // same player continues
-  }else{
+  if (!rolledSix){
     room.turnIdx = (room.turnIdx+1) % room.players.length;
   }
   sendState(room);
@@ -274,7 +278,7 @@ function botMove(room){
   if (!p || !p.bot) return;
   const dice = room.dice;
   const options = legalMoves(room, p.color, dice);
-  // naive: prefer finishing, else move the furthest token, else first
+  // prefer finishing, else move the furthest token, else none -> pass
   let pick = options.find(o=>o.to.p===57) || options.sort((a,b)=> (b.to.p??0)-(a.to.p??0))[0];
   if (!pick) { // no legal move; pass turn
     room.dice=null;
@@ -289,12 +293,14 @@ function botMove(room){
 function maybeAutoBotTurn(room){
   const p = room.players[room.turnIdx];
   if (room.status!=='playing' || !p?.bot) return;
-  // auto-press roll
-  setTimeout(()=>{
-    if (room.status!=='playing') return;
+  // If dice hasn't been rolled yet, auto-roll for the bot
+  if (room.dice==null){
     const fakeWs = { _pid:p.id };
-    onRoll(fakeWs);
-  }, 350);
+    setTimeout(()=>onRoll(fakeWs), 200);
+  }else{
+    // dice is up -> bot will move shortly
+    setTimeout(()=>botMove(room), 200);
+  }
 }
 
 function findRoomOf(ws){
