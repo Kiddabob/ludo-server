@@ -90,7 +90,7 @@ wss.on('connection', (ws)=>{
   });
 
   ws.on('close', ()=>{
-    const room = [...ROOMS.values()].find(r => r.players.some(p=>p.id===ws._pid));
+    const room = findRoomOf(ws);
     if (!room) return;
     // remove player
     const idx = room.players.findIndex(p=>p.id===ws._pid);
@@ -198,7 +198,7 @@ function onRoll(ws){
   sendState(room);
   roomLog(room, `${p.name||p.color} rolled a ${v}`);
 
-  // If this player (human or bot) has no legal moves, auto-pass the turn.
+  // auto-pass if no legal moves
   const options = legalMoves(room, p.color, v);
   if (options.length === 0) {
     roomLog(room, `${p.name||p.color} has no legal moves — turn passes`);
@@ -213,7 +213,7 @@ function onRoll(ws){
   // For bots, auto-move after short delay
   if (p.bot) setTimeout(()=>botMove(room), 350);
 
-  // Safety: try to keep bot flow alive if something resets dice
+  // Safety nudge
   setTimeout(()=>maybeAutoBotTurn(room), 500);
 }
 
@@ -227,7 +227,6 @@ function legalMoves(room, color, dice){
       if (dice===6) options.push({idx:i, to:{t:'path', p:0}});
       continue;
     }
-    // path
     const np = t.p + dice;
     if (np>57) continue; // overshoot
     options.push({idx:i, to:{t:'path', p:np}});
@@ -236,7 +235,6 @@ function legalMoves(room, color, dice){
 }
 
 function applyCapture(room, color, step){
-  // step is ring step (0..51)
   for (const opp of room.players){
     if (opp.color===color) continue;
     const ts = room.tokens[opp.color];
@@ -244,8 +242,7 @@ function applyCapture(room, color, step){
       if (tok.t==='path' && tok.p<52){
         const oppStep = (START_OF[opp.color] + tok.p) % 52;
         if (oppStep===step){
-          const safe = SAFE_STEPS.has(step);
-          if (!safe){
+          if (!SAFE_STEPS.has(step)){
             tok.t='base'; delete tok.p;
             roomLog(room, `${opp.name||opp.color} token captured by ${color} at step ${step}`);
           }
@@ -269,7 +266,6 @@ function onMove(ws, {tokenIdx}){
 
   const tok = room.tokens[pl.color][choice.idx];
 
-  // apply movement
   if (tok.t==='base' && choice.to.t==='path' && choice.to.p===0){
     tok.t='path'; tok.p=0;
     roomLog(room, `${pl.name||pl.color} moved token ${choice.idx} out of base`);
@@ -326,16 +322,16 @@ function botMove(room){
     roomLog(room, `Turn: ${nxt.name||nxt.color} (${nxt.color})`);
     return maybeAutoBotTurn(room);
   }
-  // apply as if client clicked
   roomLog(room, `${p.name} auto-moves token ${pick.idx}`);
-  onMove({ _pid:p.id }, { tokenIdx: pick.idx });
+  // supply both pid and roomId so findRoomOf works in all cases
+  onMove({ _pid:p.id, _roomId:room.id }, { tokenIdx: pick.idx });
 }
 
 function maybeAutoBotTurn(room){
   const p = room.players[room.turnIdx];
   if (room.status!=='playing' || !p?.bot) return;
   if (room.dice==null){
-    const fakeWs = { _pid:p.id };
+    const fakeWs = { _pid:p.id, _roomId:room.id };
     setTimeout(()=>onRoll(fakeWs), 250);
   }else{
     setTimeout(()=>botMove(room), 250);
@@ -343,8 +339,13 @@ function maybeAutoBotTurn(room){
 }
 
 function findRoomOf(ws){
-  if (!ws._roomId) return null;
-  return ROOMS.get(ws._roomId) || null;
+  // Primary: use ws._roomId if present
+  if (ws._roomId && ROOMS.has(ws._roomId)) return ROOMS.get(ws._roomId);
+  // Fallback: find by player id (works for bot "fake sockets")
+  for (const r of ROOMS.values()){
+    if (r.players.some(p=>p.id===ws._pid)) return r;
+  }
+  return null;
 }
 
 /* ---------- Boot ---------- */
