@@ -27,6 +27,7 @@ const players = [
 ];
 
 const safeSquares = new Set([0, 8, 13, 21, 26, 34, 39, 47]);
+const COLOR_DISTANCE_MINIMUM = 95;
 
 function createGame(roomCode) {
   return {
@@ -38,8 +39,10 @@ function createGame(roomCode) {
       type: "ai",
       clientId: null,
       sessionId: null,
-      disconnected: false
+      disconnected: false,
+      color: player.color
     })),
+    hostSessionId: null,
     turn: 0,
     dice: null,
     canRoll: true,
@@ -58,15 +61,70 @@ function roomFor(code) {
 }
 
 function publicState(game) {
+  const dynamicPlayers = players.map((player, index) => ({
+    ...player,
+    color: game.seats[index]?.color || player.color
+  }));
+
   return {
     ...game,
-    players,
+    players: dynamicPlayers,
     safeSquares: Array.from(safeSquares)
   };
 }
 
 function addLog(game, message) {
   game.log = [message, ...game.log].slice(0, 8);
+}
+
+function defaultColorForSeat(index) {
+  return players[index]?.color || "#0b57d0";
+}
+
+function normalizeHexColor(value) {
+  const color = String(value || "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toLowerCase() : null;
+}
+
+function hexToRgb(color) {
+  const hex = color.replace("#", "");
+  return {
+    r: parseInt(hex.slice(0, 2), 16),
+    g: parseInt(hex.slice(2, 4), 16),
+    b: parseInt(hex.slice(4, 6), 16)
+  };
+}
+
+function colorDistance(left, right) {
+  const a = hexToRgb(left);
+  const b = hexToRgb(right);
+  return Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b);
+}
+
+function colorIsAvailable(game, color, allowedSeatIndex = -1) {
+  return game.seats.every((seat, index) => {
+    if (index === allowedSeatIndex || seat.type !== "human") return true;
+    return colorDistance(seat.color || defaultColorForSeat(index), color) >= COLOR_DISTANCE_MINIMUM;
+  });
+}
+
+function preferredSeatIndex(game, message, sessionId) {
+  const existingSeatIndex = game.seats.findIndex((seat) => seat.clientId === message.clientId || (sessionId && seat.sessionId === sessionId));
+  if (existingSeatIndex >= 0) return existingSeatIndex;
+
+  const hasRequestedSeat = message.seat !== null && message.seat !== undefined && message.seat !== "";
+  const requested = hasRequestedSeat ? Number(message.seat) : NaN;
+  if (Number.isInteger(requested) && requested >= 0 && requested < game.seats.length && game.seats[requested].type !== "human") {
+    return requested;
+  }
+
+  const requestedColor = normalizeHexColor(message.color);
+  if (requestedColor) {
+    const matchingDefault = players.findIndex((player) => colorDistance(player.color, requestedColor) < 12);
+    if (matchingDefault >= 0 && game.seats[matchingDefault].type !== "human") return matchingDefault;
+  }
+
+  return game.seats.findIndex((seat) => seat.type !== "human");
 }
 
 function currentSeat(game) {
@@ -261,6 +319,7 @@ function removeClient(room, clientId, announce = true) {
             seat.sessionId = null;
             seat.disconnected = false;
             seat.label = players.find((player) => player.id === seat.playerId).name;
+            seat.color = defaultColorForSeat(players.findIndex((player) => player.id === seat.playerId));
             addLog(room.game, "A disconnected player was replaced by AI.");
             broadcast(room);
             setTimeout(() => aiMove(room), AI_TURN_DELAY_MS);
@@ -271,6 +330,7 @@ function removeClient(room, clientId, announce = true) {
         seat.type = "ai";
         seat.disconnected = false;
         seat.label = players.find((player) => player.id === seat.playerId).name;
+        seat.color = defaultColorForSeat(players.findIndex((player) => player.id === seat.playerId));
       }
     }
   }
@@ -285,29 +345,31 @@ function removeClient(room, clientId, announce = true) {
 function handleMessage(room, clientId, message) {
   const game = room.game;
   if (message.type === "join") {
-    const requested = Number(message.seat);
     const sessionId = String(message.sessionId || "").replace(/[^a-zA-Z0-9-]/g, "").slice(0, 64);
     const existingSeatIndex = game.seats.findIndex((seat) => seat.clientId === clientId || (sessionId && seat.sessionId === sessionId));
-    const seatIndex = existingSeatIndex >= 0
-      ? existingSeatIndex
-      : Number.isInteger(requested)
-        ? requested
-        : game.seats.findIndex((seat) => seat.type !== "human");
+    const seatIndex = preferredSeatIndex(game, { ...message, clientId }, sessionId);
     if (seatIndex < 0 || seatIndex >= game.seats.length) {
       send(room.clients.get(clientId), { type: "error", message: "That room is full." });
       return;
     }
     const seat = game.seats[seatIndex] || game.seats[0];
     const wasAlreadySeated = existingSeatIndex >= 0;
+    const requestedColor = normalizeHexColor(message.color) || seat.color || defaultColorForSeat(seatIndex);
+    if (!colorIsAvailable(game, requestedColor, seatIndex)) {
+      send(room.clients.get(clientId), { type: "error", message: "That colour is too close to another player." });
+      return;
+    }
     if (seat.sessionId) {
       clearTimeout(room.disconnectTimers.get(seat.sessionId));
       room.disconnectTimers.delete(seat.sessionId);
     }
+    if (!game.hostSessionId) game.hostSessionId = sessionId;
     seat.type = "human";
     seat.clientId = clientId;
     seat.sessionId = sessionId || seat.sessionId;
     seat.disconnected = false;
     seat.label = (message.name || seat.label || "Player").trim().slice(0, 18);
+    seat.color = requestedColor;
     if (!wasAlreadySeated) {
       addLog(game, `${seat.label} joined as ${players[seatIndex].name}.`);
     }
@@ -320,6 +382,7 @@ function handleMessage(room, clientId, message) {
       seat.clientId = seat.type === "human" ? clientId : null;
       seat.sessionId = seat.type === "human" ? String(message.sessionId || seat.sessionId || "").slice(0, 64) : null;
       seat.disconnected = false;
+      seat.color = seat.type === "human" ? normalizeHexColor(message.color) || seat.color : defaultColorForSeat(message.seat);
       seat.label = seat.type === "human" ? (message.name || seat.label).trim().slice(0, 18) : players[message.seat].name;
       addLog(game, `${players[message.seat].name} is now ${seat.type === "human" ? "a human seat" : "AI controlled"}.`);
     }
@@ -337,6 +400,14 @@ function handleMessage(room, clientId, message) {
 
 function serveFile(request, response) {
   const urlPath = decodeURIComponent(new URL(request.url, `http://${request.headers.host}`).pathname);
+  if (urlPath.startsWith("/api/room/")) {
+    const roomCode = urlPath.split("/").pop();
+    const room = roomFor(roomCode);
+    response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify(publicState(room.game)));
+    return;
+  }
+
   const safePath = urlPath === "/" ? "/index.html" : urlPath;
   const filePath = path.normalize(path.join(PUBLIC_DIR, safePath));
 

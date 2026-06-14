@@ -4,6 +4,12 @@ const colors = {
   yellow: "#fbbc04",
   green: "#34a853"
 };
+const defaultPalette = [
+  { id: "red", label: "Red", color: colors.red, seat: 0 },
+  { id: "blue", label: "Blue", color: colors.blue, seat: 1 },
+  { id: "yellow", label: "Yellow", color: colors.yellow, seat: 2 },
+  { id: "green", label: "Green", color: colors.green, seat: 3 }
+];
 
 const board = document.querySelector("#board");
 const seatsEl = document.querySelector("#seats");
@@ -20,8 +26,17 @@ const setupForm = document.querySelector("#setupForm");
 const setupNameInput = document.querySelector("#setupName");
 const setupRoomCodeInput = document.querySelector("#setupRoomCode");
 const hostRoomButton = document.querySelector("#hostRoom");
+const joinRoomButton = document.querySelector("#joinRoom");
 const leaveRoomButton = document.querySelector("#leaveRoom");
 const themeToggleButton = document.querySelector("#themeToggle");
+const colourSwatches = document.querySelector("#colourSwatches");
+const colourStatus = document.querySelector("#colourStatus");
+const customColourPreview = document.querySelector("#customColourPreview");
+const useCustomColourInput = document.querySelector("#useCustomColour");
+const hslControls = document.querySelector("#hslControls");
+const hueRange = document.querySelector("#hueRange");
+const satRange = document.querySelector("#satRange");
+const lightRange = document.querySelector("#lightRange");
 const playerNameDisplay = document.querySelector("#playerNameDisplay");
 const copyInviteButton = document.querySelector("#copyInvite");
 const roomBadge = document.querySelector("#roomBadge");
@@ -69,6 +84,9 @@ let shouldReconnect = false;
 let lastTurnSignature = "";
 let lastDice = null;
 let previousState = null;
+let selectedColourId = "red";
+let roomPreviewState = null;
+let roomPreviewTimer;
 const sessionId = getSessionId();
 const safeSquareIndexes = [0, 8, 13, 21, 26, 34, 39, 47];
 const safeSquareColors = {
@@ -108,6 +126,11 @@ function createBoard() {
 
       if (row >= 6 && row <= 8 && col >= 6 && col <= 8) {
         cell.classList.add("center");
+        if (row === 7 && col === 7) cell.classList.add("center-core");
+        else if (col < 7) cell.classList.add("center-red");
+        else if (row < 7) cell.classList.add("center-blue");
+        else if (col > 7) cell.classList.add("center-yellow");
+        else if (row > 7) cell.classList.add("center-green");
       } else if (lane) {
         cell.classList.add("path", "home", `home-${lane.player}`);
       } else if (trackKeys.has(key(row, col))) {
@@ -140,7 +163,13 @@ function connect(room) {
   socket.addEventListener("open", () => {
     if (token !== connectionToken) return;
     statusChip.textContent = "Online";
-    send({ type: "join", name: playerName, sessionId });
+    send({
+      type: "join",
+      name: playerName,
+      sessionId,
+      seat: selectedSeatIndex(),
+      color: selectedColour()
+    });
   });
 
   socket.addEventListener("message", (event) => {
@@ -197,20 +226,126 @@ function render() {
   renderCelebration();
 }
 
+function colorFor(playerId) {
+  const seat = state?.seats?.find((item) => item.playerId === playerId);
+  return seat?.color || colors[playerId] || "#0b57d0";
+}
+
+function selectedSeatIndex() {
+  if (useCustomColourInput.checked) return null;
+  return defaultPalette.find((item) => item.id === selectedColourId)?.seat ?? 0;
+}
+
+function selectedColour() {
+  if (useCustomColourInput.checked) return hslToHex(Number(hueRange.value), Number(satRange.value), Number(lightRange.value));
+  return defaultPalette.find((item) => item.id === selectedColourId)?.color || colors.red;
+}
+
+function usedHumanColours() {
+  return (roomPreviewState?.seats || [])
+    .filter((seat) => seat.type === "human")
+    .map((seat) => seat.color)
+    .filter(Boolean);
+}
+
+function colourDistance(left, right) {
+  const a = hexToRgb(left);
+  const b = hexToRgb(right);
+  return Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b);
+}
+
+function hexToRgb(color) {
+  const hex = color.replace("#", "");
+  return {
+    r: parseInt(hex.slice(0, 2), 16),
+    g: parseInt(hex.slice(2, 4), 16),
+    b: parseInt(hex.slice(4, 6), 16)
+  };
+}
+
+function colourTooClose(color) {
+  return usedHumanColours().some((used) => colourDistance(color, used) < 95);
+}
+
+function hslToHex(h, s, l) {
+  s /= 100;
+  l /= 100;
+  const k = (n) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return `#${[f(0), f(8), f(4)].map((value) => Math.round(255 * value).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function renderColourPicker() {
+  const humanSeats = new Set((roomPreviewState?.seats || [])
+    .map((seat, index) => seat.type === "human" ? index : null)
+    .filter((index) => index !== null));
+
+  colourSwatches.innerHTML = defaultPalette.map((item) => {
+    const disabled = humanSeats.has(item.seat);
+    const selected = !useCustomColourInput.checked && selectedColourId === item.id;
+    return `
+      <button class="colour-swatch ${selected ? "selected" : ""}" type="button" data-colour="${item.id}" ${disabled ? "disabled" : ""}>
+        <span style="background:${item.color}"></span>
+        ${item.label}
+      </button>
+    `;
+  }).join("");
+
+  colourSwatches.querySelectorAll(".colour-swatch").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectedColourId = button.dataset.colour;
+      useCustomColourInput.checked = false;
+      hslControls.classList.add("hidden");
+      renderColourPicker();
+    });
+  });
+
+  const custom = selectedColour();
+  const customConflict = useCustomColourInput.checked && colourTooClose(custom);
+  customColourPreview.style.background = custom;
+  colourStatus.textContent = customConflict
+    ? "Custom colour too close"
+    : useCustomColourInput.checked
+      ? "Custom colour selected"
+      : `${defaultPalette.find((item) => item.id === selectedColourId)?.label || "Red"} selected`;
+  joinRoomButton.disabled = customConflict || (!useCustomColourInput.checked && humanSeats.has(selectedSeatIndex()));
+}
+
+async function loadRoomPreview() {
+  const code = cleanRoomCode(setupRoomCodeInput.value);
+  if (!code) {
+    roomPreviewState = null;
+    renderColourPicker();
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/room/${encodeURIComponent(code)}`);
+    roomPreviewState = response.ok ? await response.json() : null;
+  } catch {
+    roomPreviewState = null;
+  }
+  renderColourPicker();
+}
+
 function renderSeats() {
+  const amSeated = state.seats.some((seat) => seat.clientId === clientId);
   seatsEl.innerHTML = state.seats.map((seat, index) => {
     const player = state.players[index];
     const mine = seat.clientId === clientId;
+    const isHost = seat.sessionId && seat.sessionId === state.hostSessionId;
+    const seatStatus = seat.type === "ai" ? "AI" : isHost ? "Host" : "Player";
     const tokensHome = state.tokens[player.id].filter((position) => position === 57).length;
     return `
       <article class="seat ${index === state.turn && state.phase === "playing" ? "active" : ""}">
-        <div class="seat-dot" style="background:${player.color}"></div>
+        <div class="seat-dot" style="background:${colorFor(player.id)}"></div>
         <div>
           <strong>${escapeHtml(seat.label)}</strong>
-          <span>${mine ? "You" : seat.disconnected ? "Reconnecting" : seat.type === "ai" ? "AI player" : "Online player"}</span>
+          <span>${mine ? `You (${seatStatus})` : seat.disconnected ? "Reconnecting" : seatStatus}</span>
           <small>${tokensHome}/4 home</small>
         </div>
-        <button type="button" data-seat="${index}">${seat.type === "ai" ? "Take" : mine ? "AI" : "Busy"}</button>
+        <button type="button" data-seat="${index}" ${seat.type === "human" || amSeated ? "disabled" : ""}>${seat.type === "ai" ? amSeated ? "AI" : "Open" : seatStatus}</button>
       </article>
     `;
   }).join("");
@@ -225,7 +360,8 @@ function renderSeats() {
         seat: index,
         seatType: seat.type === "ai" ? "human" : "ai",
         name: playerName,
-        sessionId
+        sessionId,
+        color: selectedColour()
       });
     });
   });
@@ -261,7 +397,7 @@ function renderTokens() {
       token.dataset.tokenId = `${item.player.id}-${item.token}`;
       token.style.setProperty("--stack-index", index);
       token.className = `token ${item.movable ? "movable" : ""}`;
-      token.style.background = colors[item.player.id];
+      token.style.background = colorFor(item.player.id);
       token.textContent = item.token + 1;
       token.type = "button";
       token.disabled = !item.movable;
@@ -365,7 +501,7 @@ function showLandingPreview(move) {
   if (!cell) return;
   const preview = document.createElement("div");
   preview.className = "landing-preview";
-  preview.style.background = colors[move.playerId];
+  preview.style.background = colorFor(move.playerId);
   cell.appendChild(preview);
 }
 
@@ -464,7 +600,7 @@ function getSessionId() {
 
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  themeToggleButton.textContent = theme === "dark" ? "☀" : "☾";
+  themeToggleButton.textContent = theme === "dark" ? "Light" : "Dark";
   localStorage.setItem("ludoTheme", theme);
 }
 
@@ -486,11 +622,17 @@ setupForm.addEventListener("submit", (event) => {
     setupRoomCodeInput.focus();
     return;
   }
+  if (joinRoomButton.disabled) {
+    showToast("Choose an available colour first");
+    return;
+  }
   connect(room);
 });
 
 hostRoomButton.addEventListener("click", () => {
   setupRoomCodeInput.value = randomRoomCode();
+  roomPreviewState = null;
+  renderColourPicker();
   connect(setupRoomCodeInput.value);
 });
 
@@ -500,6 +642,20 @@ leaveRoomButton.addEventListener("click", () => {
 
 themeToggleButton.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+});
+
+setupRoomCodeInput.addEventListener("input", () => {
+  clearTimeout(roomPreviewTimer);
+  roomPreviewTimer = setTimeout(loadRoomPreview, 280);
+});
+
+useCustomColourInput.addEventListener("change", () => {
+  hslControls.classList.toggle("hidden", !useCustomColourInput.checked);
+  renderColourPicker();
+});
+
+[hueRange, satRange, lightRange].forEach((input) => {
+  input.addEventListener("input", renderColourPicker);
 });
 
 copyInviteButton.addEventListener("click", async () => {
@@ -520,8 +676,10 @@ window.addEventListener("beforeunload", () => disconnect(false));
 
 createBoard();
 applyTheme(localStorage.getItem("ludoTheme") || "light");
+renderColourPicker();
 
 const roomFromUrl = new URLSearchParams(location.search).get("room");
 if (roomFromUrl) {
   setupRoomCodeInput.value = cleanRoomCode(roomFromUrl);
+  loadRoomPreview();
 }

@@ -26,6 +26,34 @@
             Join code
             <input id="setupRoomCode" maxlength="8" placeholder="ABCD12" autocomplete="off">
           </label>
+          <section class="colour-picker" aria-label="Choose player colour">
+            <div class="setup-row">
+              <div>
+                <p class="eyebrow">Colour</p>
+                <strong id="colourStatus">Choose a colour</strong>
+              </div>
+              <span id="customColourPreview" class="colour-preview"></span>
+            </div>
+            <div id="colourSwatches" class="colour-swatches"></div>
+            <label class="custom-toggle">
+              <input id="useCustomColour" type="checkbox">
+              Custom HSL colour
+            </label>
+            <div id="hslControls" class="hsl-controls hidden">
+              <label>
+                Hue
+                <input id="hueRange" type="range" min="0" max="360" value="214">
+              </label>
+              <label>
+                Saturation
+                <input id="satRange" type="range" min="35" max="95" value="72">
+              </label>
+              <label>
+                Lightness
+                <input id="lightRange" type="range" min="38" max="66" value="58">
+              </label>
+            </div>
+          </section>
           <div class="setup-actions">
             <button id="hostRoom" class="primary" type="button">Host</button>
             <button id="joinRoom" class="tonal" type="submit">Join</button>
@@ -45,8 +73,8 @@
               <span>Playing as</span>
               <strong id="playerNameDisplay">Player</strong>
             </div>
-            <button id="copyInvite" class="icon-button" type="button" title="Copy invite link" aria-label="Copy invite link">↗</button>
-            <button id="themeToggle" class="icon-button" type="button" title="Toggle dark theme" aria-label="Toggle dark theme">☾</button>
+            <button id="copyInvite" class="icon-button" type="button" title="Copy invite link" aria-label="Copy invite link">Link</button>
+            <button id="themeToggle" class="icon-button" type="button" title="Toggle dark theme" aria-label="Toggle dark theme">Dark</button>
             <button id="leaveRoom" class="tonal" type="button">Leave</button>
           </div>
         </section>
