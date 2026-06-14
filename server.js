@@ -207,13 +207,56 @@ function startGame(game) {
 
 function broadcast(room) {
   const message = encodeFrame(JSON.stringify({ type: "state", state: publicState(room.game) }));
-  for (const socket of room.clients.values()) {
-    socket.write(message);
+  for (const [clientId, socket] of room.clients.entries()) {
+    if (!writeFrame(room, clientId, socket, message)) {
+      removeClient(room, clientId);
+    }
   }
 }
 
 function send(socket, payload) {
-  socket.write(encodeFrame(JSON.stringify(payload)));
+  if (!socket || socket.destroyed || !socket.writable) return false;
+  try {
+    socket.write(encodeFrame(JSON.stringify(payload)));
+    return true;
+  } catch {
+    socket.destroy();
+    return false;
+  }
+}
+
+function writeFrame(room, clientId, socket, frame) {
+  if (!socket || socket.destroyed || !socket.writable) return false;
+  try {
+    socket.write(frame);
+    return true;
+  } catch {
+    socket.destroy();
+    room.clients.delete(clientId);
+    return false;
+  }
+}
+
+function removeClient(room, clientId, announce = true) {
+  const socket = room.clients.get(clientId);
+  room.clients.delete(clientId);
+  if (socket && !socket.destroyed) socket.destroy();
+
+  let hadSeat = false;
+  for (const seat of room.game.seats) {
+    if (seat.clientId === clientId) {
+      hadSeat = true;
+      seat.type = "ai";
+      seat.clientId = null;
+      seat.label = players.find((player) => player.id === seat.playerId).name;
+    }
+  }
+
+  if (announce && hadSeat) {
+    addLog(room.game, "A player left. AI has taken over their seat.");
+  }
+
+  return hadSeat;
 }
 
 function handleMessage(room, clientId, message) {
@@ -330,6 +373,10 @@ function decodeFrames(buffer) {
 const server = http.createServer(serveFile);
 
 server.on("upgrade", (request, socket) => {
+  socket.on("error", () => {
+    if (!socket.destroyed) socket.destroy();
+  });
+
   if (request.headers.upgrade !== "websocket") {
     socket.destroy();
     return;
@@ -340,19 +387,28 @@ server.on("upgrade", (request, socket) => {
     .update(`${request.headers["sec-websocket-key"]}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
     .digest("base64");
 
-  socket.write([
-    "HTTP/1.1 101 Switching Protocols",
-    "Upgrade: websocket",
-    "Connection: Upgrade",
-    `Sec-WebSocket-Accept: ${accept}`,
-    "",
-    ""
-  ].join("\r\n"));
+  try {
+    socket.write([
+      "HTTP/1.1 101 Switching Protocols",
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      `Sec-WebSocket-Accept: ${accept}`,
+      "",
+      ""
+    ].join("\r\n"));
+  } catch {
+    socket.destroy();
+    return;
+  }
 
   const roomCode = new URL(request.url, `http://${request.headers.host}`).searchParams.get("room");
   const room = roomFor(roomCode);
   const clientId = crypto.randomUUID();
   room.clients.set(clientId, socket);
+  socket.on("error", () => {
+    const hadSeat = removeClient(room, clientId);
+    if (hadSeat) broadcast(room);
+  });
   send(socket, { type: "hello", clientId, state: publicState(room.game) });
 
   socket.on("data", (data) => {
@@ -366,17 +422,11 @@ server.on("upgrade", (request, socket) => {
   });
 
   socket.on("close", () => {
-    room.clients.delete(clientId);
-    for (const seat of room.game.seats) {
-      if (seat.clientId === clientId) {
-        seat.type = "ai";
-        seat.clientId = null;
-        seat.label = players.find((player) => player.id === seat.playerId).name;
-      }
+    const hadSeat = removeClient(room, clientId);
+    if (hadSeat) {
+      broadcast(room);
+      setTimeout(() => aiMove(room), 650);
     }
-    addLog(room.game, "A player left. AI has taken over their seat.");
-    broadcast(room);
-    setTimeout(() => aiMove(room), 650);
   });
 });
 
