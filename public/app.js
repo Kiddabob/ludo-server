@@ -65,6 +65,9 @@ let celebratedWinner = null;
 let reconnectTimer;
 let connectionToken = 0;
 let shouldReconnect = false;
+let lastTurnSignature = "";
+let lastDice = null;
+const sessionId = getSessionId();
 
 function key(row, col) {
   return `${row}-${col}`;
@@ -73,6 +76,7 @@ function key(row, col) {
 function createBoard() {
   board.innerHTML = "";
   const trackKeys = new Set(outerTrack.map(([row, col]) => key(row, col)));
+  const safeKeys = new Set([0, 8, 13, 21, 26, 34, 39, 47].map((index) => key(...outerTrack[index])));
   const laneKeys = new Map();
   for (const [player, cells] of Object.entries(homeLanes)) {
     cells.forEach(([row, col], index) => laneKeys.set(key(row, col), { player, index }));
@@ -95,6 +99,7 @@ function createBoard() {
         cell.classList.add("path", "home", `home-${lane.player}`);
       } else if (trackKeys.has(key(row, col))) {
         cell.classList.add("path");
+        if (safeKeys.has(key(row, col))) cell.classList.add("safe");
       } else if (home) {
         cell.classList.add("yard", `yard-${home[0]}`);
       }
@@ -122,7 +127,7 @@ function connect(room) {
   socket.addEventListener("open", () => {
     if (token !== connectionToken) return;
     statusChip.textContent = "Online";
-    send({ type: "join", name: playerName });
+    send({ type: "join", name: playerName, sessionId });
   });
 
   socket.addEventListener("message", (event) => {
@@ -188,7 +193,7 @@ function renderSeats() {
         <div class="seat-dot" style="background:${player.color}"></div>
         <div>
           <strong>${escapeHtml(seat.label)}</strong>
-          <span>${mine ? "You" : seat.type === "ai" ? "AI player" : "Online player"}</span>
+          <span>${mine ? "You" : seat.disconnected ? "Reconnecting" : seat.type === "ai" ? "AI player" : "Online player"}</span>
           <small>${tokensHome}/4 home</small>
         </div>
         <button type="button" data-seat="${index}">${seat.type === "ai" ? "Take" : mine ? "AI" : "Busy"}</button>
@@ -205,13 +210,18 @@ function renderSeats() {
         type: "setSeat",
         seat: index,
         seatType: seat.type === "ai" ? "human" : "ai",
-        name: playerName
+        name: playerName,
+        sessionId
       });
     });
   });
 }
 
 function renderTokens() {
+  const previousRects = new Map();
+  board.querySelectorAll(".token").forEach((token) => {
+    previousRects.set(token.dataset.tokenId, token.getBoundingClientRect());
+  });
   board.querySelectorAll(".token-stack").forEach((stack) => stack.remove());
   const stacks = new Map();
   const movable = new Set(availableMoves().map((move) => `${move.playerId}-${move.token}`));
@@ -231,6 +241,7 @@ function renderTokens() {
     stack.className = "token-stack";
     for (const item of tokens) {
       const token = document.createElement("button");
+      token.dataset.tokenId = `${item.player.id}-${item.token}`;
       token.className = `token ${item.movable ? "movable" : ""}`;
       token.style.background = colors[item.player.id];
       token.textContent = item.token + 1;
@@ -241,6 +252,8 @@ function renderTokens() {
     }
     cell.appendChild(stack);
   }
+
+  animateMovedTokens(previousRects);
 }
 
 function renderControls() {
@@ -248,6 +261,11 @@ function renderControls() {
   const player = state.players[state.turn];
   const isMyTurn = seat?.type === "human" && seat.clientId === clientId;
   const moves = availableMoves();
+  const turnSignature = `${state.phase}-${state.turn}-${state.canRoll}-${state.dice}-${clientId}`;
+  if (isMyTurn && turnSignature !== lastTurnSignature) {
+    showToast(state.canRoll ? "Your turn to roll" : "Choose a highlighted token");
+  }
+  lastTurnSignature = turnSignature;
   turnLabel.textContent = state.winner
     ? `${seatLabel(state.winner)} wins`
     : state.phase === "lobby"
@@ -268,6 +286,7 @@ function renderControls() {
   rollButton.disabled = !(state.phase === "playing" && state.canRoll && isMyTurn);
   startButton.disabled = state.phase === "playing";
   board.classList.toggle("my-turn", Boolean(isMyTurn && state.phase === "playing"));
+  document.body.classList.toggle("is-my-turn", Boolean(isMyTurn && state.phase === "playing"));
 }
 
 function renderLog() {
@@ -303,10 +322,34 @@ function seatLabel(playerId) {
 }
 
 function renderDice(value) {
+  if (lastDice !== value && value) {
+    rollButton.classList.add("rolled");
+    setTimeout(() => rollButton.classList.remove("rolled"), 650);
+  }
+  lastDice = value;
   diceValue.dataset.value = value || 0;
   diceValue.innerHTML = value
     ? Array.from({ length: 9 }, () => '<span class="pip"></span>').join("")
     : "Roll";
+}
+
+function animateMovedTokens(previousRects) {
+  board.querySelectorAll(".token").forEach((token) => {
+    const previous = previousRects.get(token.dataset.tokenId);
+    if (!previous) return;
+    const next = token.getBoundingClientRect();
+    const dx = previous.left - next.left;
+    const dy = previous.top - next.top;
+    if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return;
+
+    token.animate([
+      { transform: `translate(${dx}px, ${dy}px) scale(1.08)`, zIndex: 3 },
+      { transform: "translate(0, 0) scale(1)", zIndex: 3 }
+    ], {
+      duration: 620,
+      easing: "cubic-bezier(0.2, 0, 0, 1)"
+    });
+  });
 }
 
 function showToast(message) {
@@ -346,6 +389,15 @@ function cleanPlayerName(value) {
 
 function randomRoomCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
+function getSessionId() {
+  const keyName = "ludoPlayerSessionId";
+  const existing = localStorage.getItem(keyName);
+  if (existing) return existing;
+  const next = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+  localStorage.setItem(keyName, next);
+  return next;
 }
 
 function escapeHtml(value) {

@@ -6,6 +6,8 @@ const path = require("path");
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, "public");
 const rooms = new Map();
+const RECONNECT_GRACE_MS = 15000;
+const AI_TURN_DELAY_MS = 1100;
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -34,7 +36,9 @@ function createGame(roomCode) {
       playerId: player.id,
       label: player.name,
       type: "ai",
-      clientId: null
+      clientId: null,
+      sessionId: null,
+      disconnected: false
     })),
     turn: 0,
     dice: null,
@@ -48,7 +52,7 @@ function createGame(roomCode) {
 function roomFor(code) {
   const roomCode = (code || "PLAY").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) || "PLAY";
   if (!rooms.has(roomCode)) {
-    rooms.set(roomCode, { game: createGame(roomCode), clients: new Map() });
+    rooms.set(roomCode, { game: createGame(roomCode), clients: new Map(), disconnectTimers: new Map() });
   }
   return rooms.get(roomCode);
 }
@@ -71,7 +75,7 @@ function currentSeat(game) {
 
 function isHumanTurn(game, clientId) {
   const seat = currentSeat(game);
-  return seat && seat.type === "human" && seat.clientId === clientId;
+  return seat && seat.type === "human" && seat.clientId === clientId && !seat.disconnected;
 }
 
 function pathIndexFor(player, value) {
@@ -165,7 +169,7 @@ function aiMove(room) {
   if (game.canRoll) {
     rollDice(game);
     broadcast(room);
-    setTimeout(() => aiMove(room), 650);
+    setTimeout(() => aiMove(room), AI_TURN_DELAY_MS);
     return;
   }
 
@@ -178,7 +182,7 @@ function aiMove(room) {
     .sort((a, b) => b.score - a.score)[0];
   moveToken(game, null, move.token);
   broadcast(room);
-  setTimeout(() => aiMove(room), 650);
+  setTimeout(() => aiMove(room), AI_TURN_DELAY_MS);
 }
 
 function scoreAiMove(game, playerId, move) {
@@ -246,14 +250,33 @@ function removeClient(room, clientId, announce = true) {
   for (const seat of room.game.seats) {
     if (seat.clientId === clientId) {
       hadSeat = true;
-      seat.type = "ai";
       seat.clientId = null;
-      seat.label = players.find((player) => player.id === seat.playerId).name;
+      seat.disconnected = true;
+      if (seat.sessionId) {
+        const sessionId = seat.sessionId;
+        clearTimeout(room.disconnectTimers.get(sessionId));
+        room.disconnectTimers.set(sessionId, setTimeout(() => {
+          if (!seat.clientId && seat.disconnected) {
+            seat.type = "ai";
+            seat.sessionId = null;
+            seat.disconnected = false;
+            seat.label = players.find((player) => player.id === seat.playerId).name;
+            addLog(room.game, "A disconnected player was replaced by AI.");
+            broadcast(room);
+            setTimeout(() => aiMove(room), AI_TURN_DELAY_MS);
+          }
+          room.disconnectTimers.delete(sessionId);
+        }, RECONNECT_GRACE_MS));
+      } else {
+        seat.type = "ai";
+        seat.disconnected = false;
+        seat.label = players.find((player) => player.id === seat.playerId).name;
+      }
     }
   }
 
   if (announce && hadSeat) {
-    addLog(room.game, "A player left. AI has taken over their seat.");
+    addLog(room.game, "A player disconnected. Holding their seat briefly.");
   }
 
   return hadSeat;
@@ -263,7 +286,8 @@ function handleMessage(room, clientId, message) {
   const game = room.game;
   if (message.type === "join") {
     const requested = Number(message.seat);
-    const existingSeatIndex = game.seats.findIndex((seat) => seat.clientId === clientId);
+    const sessionId = String(message.sessionId || "").replace(/[^a-zA-Z0-9-]/g, "").slice(0, 64);
+    const existingSeatIndex = game.seats.findIndex((seat) => seat.clientId === clientId || (sessionId && seat.sessionId === sessionId));
     const seatIndex = existingSeatIndex >= 0
       ? existingSeatIndex
       : Number.isInteger(requested)
@@ -275,8 +299,14 @@ function handleMessage(room, clientId, message) {
     }
     const seat = game.seats[seatIndex] || game.seats[0];
     const wasAlreadySeated = existingSeatIndex >= 0;
+    if (seat.sessionId) {
+      clearTimeout(room.disconnectTimers.get(seat.sessionId));
+      room.disconnectTimers.delete(seat.sessionId);
+    }
     seat.type = "human";
     seat.clientId = clientId;
+    seat.sessionId = sessionId || seat.sessionId;
+    seat.disconnected = false;
     seat.label = (message.name || seat.label || "Player").trim().slice(0, 18);
     if (!wasAlreadySeated) {
       addLog(game, `${seat.label} joined as ${players[seatIndex].name}.`);
@@ -288,6 +318,8 @@ function handleMessage(room, clientId, message) {
     if (seat && (seat.clientId === clientId || seat.type === "ai")) {
       seat.type = message.seatType === "human" ? "human" : "ai";
       seat.clientId = seat.type === "human" ? clientId : null;
+      seat.sessionId = seat.type === "human" ? String(message.sessionId || seat.sessionId || "").slice(0, 64) : null;
+      seat.disconnected = false;
       seat.label = seat.type === "human" ? (message.name || seat.label).trim().slice(0, 18) : players[message.seat].name;
       addLog(game, `${players[message.seat].name} is now ${seat.type === "human" ? "a human seat" : "AI controlled"}.`);
     }
@@ -300,7 +332,7 @@ function handleMessage(room, clientId, message) {
 
   const activeRoom = room;
   broadcast(activeRoom);
-  setTimeout(() => aiMove(activeRoom), 650);
+  setTimeout(() => aiMove(activeRoom), AI_TURN_DELAY_MS);
 }
 
 function serveFile(request, response) {
@@ -425,7 +457,7 @@ server.on("upgrade", (request, socket) => {
     const hadSeat = removeClient(room, clientId);
     if (hadSeat) {
       broadcast(room);
-      setTimeout(() => aiMove(room), 650);
+      setTimeout(() => aiMove(room), AI_TURN_DELAY_MS);
     }
   });
 });
