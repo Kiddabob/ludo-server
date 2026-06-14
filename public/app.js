@@ -661,19 +661,14 @@ function animateRenderedDie(value, onReveal, onComplete) {
     x: rollRect.left + rollRect.width / 2,
     y: rollRect.top + rollRect.height / 2
   };
-  const end = {
-    x: clamp(width * 0.52, 96, width - 96),
-    y: clamp(height * 0.42, 96, height - 120)
-  };
-  const controlA = {
-    x: clamp(width * 0.08, 70, width - 70),
-    y: clamp(height * 0.1, 70, height - 70)
-  };
-  const controlB = {
-    x: clamp(width * 0.92, 70, width - 70),
-    y: clamp(height * 0.2, 70, height - 70)
-  };
-  const duration = 1480;
+  const margin = 64;
+  const end = randomViewportPoint(width, height, margin, start, Math.min(width, height) * 0.28);
+  const controlA = randomViewportPoint(width, height, margin, start, Math.min(width, height) * 0.18);
+  const controlB = randomViewportPoint(width, height, margin, end, Math.min(width, height) * 0.18);
+  const duration = 1380 + Math.random() * 320;
+  const bounceCount = 4.6 + Math.random() * 1.8;
+  const spinSpeed = 7.2 + Math.random() * 3.2;
+  const sideDrift = (Math.random() > 0.5 ? 1 : -1) * Math.min(150, width * (0.08 + Math.random() * 0.06));
   const startedAt = performance.now();
   const bounceMarks = new Set();
   let revealed = false;
@@ -683,14 +678,14 @@ function animateRenderedDie(value, onReveal, onComplete) {
     const progress = Math.min(1, (now - startedAt) / duration);
     const eased = easeOutCubic(progress);
     const base = cubicBezier(start, controlA, controlB, end, eased);
-    const bounce = Math.abs(Math.sin(progress * Math.PI * 5.2)) * (1 - progress) * 120;
-    const skid = Math.sin(progress * Math.PI * 2.6) * (1 - progress) * Math.min(110, width * 0.07);
-    const spin = progress * Math.PI * 8.4;
+    const bounce = Math.abs(Math.sin(progress * Math.PI * bounceCount)) * (1 - progress) * Math.min(150, height * 0.16);
+    const skid = Math.sin(progress * Math.PI * 2.6) * (1 - progress) * sideDrift;
+    const spin = progress * Math.PI * spinSpeed;
     const wobble = Math.sin(progress * Math.PI * 8) * (1 - progress) * 0.6;
     const settle = progress < 0.82 ? 0 : easeOutCubic((progress - 0.82) / 0.18);
     const position = {
-      x: clamp(base.x + skid, 72, width - 72),
-      y: clamp(base.y - bounce, 72, height - 82)
+      x: clamp(base.x + skid, margin, width - margin),
+      y: clamp(base.y - bounce, margin, height - margin)
     };
     const rotation = settledRotationFor(value);
     const angles = {
@@ -711,7 +706,7 @@ function animateRenderedDie(value, onReveal, onComplete) {
     }
 
     context.clearRect(0, 0, width, height);
-    drawDie(context, position.x, position.y, 58 + Math.sin(progress * Math.PI) * 12, angles);
+    drawDie(context, position.x, position.y, 35 + Math.sin(progress * Math.PI) * 7, angles);
 
     if (progress < 1) {
       animateRenderedDie.frame = requestAnimationFrame(frame);
@@ -733,6 +728,26 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function randomBetween(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function distanceBetween(left, right) {
+  return Math.hypot(left.x - right.x, left.y - right.y);
+}
+
+function randomViewportPoint(width, height, margin, awayFrom, minDistance) {
+  let point = { x: width / 2, y: height / 2 };
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    point = {
+      x: randomBetween(margin, Math.max(margin, width - margin)),
+      y: randomBetween(margin, Math.max(margin, height - margin))
+    };
+    if (!awayFrom || distanceBetween(point, awayFrom) >= minDistance) return point;
+  }
+  return point;
+}
+
 function easeOutCubic(value) {
   const clamped = clamp(value, 0, 1);
   return 1 - Math.pow(1 - clamped, 3);
@@ -750,8 +765,8 @@ function settledRotationFor(value) {
   return {
     1: { x: 0, y: 0, z: -0.12 },
     2: { x: 0, y: -Math.PI / 2, z: 0.1 },
-    3: { x: -Math.PI / 2, y: 0, z: -0.08 },
-    4: { x: Math.PI / 2, y: 0, z: 0.08 },
+    3: { x: Math.PI / 2, y: 0, z: -0.08 },
+    4: { x: -Math.PI / 2, y: 0, z: 0.08 },
     5: { x: 0, y: Math.PI / 2, z: -0.1 },
     6: { x: 0, y: Math.PI, z: 0.12 }
   }[value] || { x: 0, y: 0, z: 0 };

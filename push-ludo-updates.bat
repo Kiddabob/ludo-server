@@ -2,7 +2,7 @@
 setlocal
 
 set "REPO_DIR=G:\K Website\Ludo"
-set "DEFAULT_COMMIT_MSG=Polish seat layout and dice roll animation"
+set "DEFAULT_COMMIT_MSG=Randomise and resize dice roll animation"
 
 title Push Ludo Updates
 echo.
