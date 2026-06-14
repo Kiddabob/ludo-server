@@ -17,6 +17,22 @@
   --player-blue: var(--blue);
   --player-yellow: var(--yellow);
   --player-green: var(--green);
+  --player-red-board: var(--red);
+  --player-blue-board: var(--blue);
+  --player-yellow-board: var(--yellow);
+  --player-green-board: var(--green);
+  --player-red-ink: #ffffff;
+  --player-blue-ink: #ffffff;
+  --player-yellow-ink: #10233f;
+  --player-green-ink: #ffffff;
+  --player-red-ring: rgba(255, 255, 255, 0.88);
+  --player-blue-ring: rgba(255, 255, 255, 0.88);
+  --player-yellow-ring: rgba(255, 255, 255, 0.88);
+  --player-green-ring: rgba(255, 255, 255, 0.88);
+  --player-red-board-ink: #ffffff;
+  --player-blue-board-ink: #ffffff;
+  --player-yellow-board-ink: #10233f;
+  --player-green-board-ink: #ffffff;
   --board-border: color-mix(in srgb, var(--surface) 88%, white);
   --shadow: 0 16px 48px rgba(60, 64, 67, 0.16);
   --shadow-strong: 0 24px 80px rgba(60, 64, 67, 0.22);
@@ -386,7 +402,7 @@ input:focus {
   width: 36px;
   height: 36px;
   border-radius: 14px;
-  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.65);
+  box-shadow: inset 0 0 0 3px var(--seat-ring, rgba(255, 255, 255, 0.65));
 }
 
 .seat strong {
@@ -527,35 +543,42 @@ input:focus {
   background: #ffffff;
 }
 
-.cell.safe::before {
-  display: grid;
-  place-items: center;
-  width: 54%;
-  height: 54%;
-  border: 2px solid rgba(255, 255, 255, 0.9);
-  border-radius: 999px;
-  color: #ffffff;
-  content: "";
-  font-size: clamp(0.78rem, 1.4vw, 1.08rem);
-  line-height: 1;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
-  box-shadow: 0 8px 16px rgba(60, 64, 67, 0.16);
+.cell.safe:not(.safe-start) {
+  background: color-mix(in srgb, var(--safe-color, var(--primary)) 18%, var(--surface)) !important;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--safe-color, var(--primary)) 42%, transparent);
 }
 
-.cell.safe::after {
+:root[data-theme="dark"] .cell.safe:not(.safe-start) {
+  background: color-mix(in srgb, var(--safe-color, var(--primary)) 28%, #121821) !important;
+}
+
+.cell.safe:not(.safe-start)::before {
   position: absolute;
-  width: 28%;
-  height: 28%;
-  background: #ffffff;
+  inset: 9%;
+  display: block;
+  border: 0;
+  border-radius: 0;
+  background: var(--safe-color, var(--primary));
   clip-path: polygon(50% 0%, 61% 34%, 98% 35%, 68% 55%, 79% 91%, 50% 69%, 21% 91%, 32% 55%, 2% 35%, 39% 34%);
   content: "";
+  opacity: 0.95;
+  filter: drop-shadow(0 5px 9px rgba(32, 33, 36, 0.18));
+}
+
+.cell.safe:not(.safe-start)::after {
+  position: absolute;
+  inset: 24%;
+  background: var(--safe-ink, #ffffff);
+  clip-path: polygon(50% 0%, 61% 34%, 98% 35%, 68% 55%, 79% 91%, 50% 69%, 21% 91%, 32% 55%, 2% 35%, 39% 34%);
+  content: "";
+  opacity: 0.36;
 }
 
 .cell.safe-start {
-  --arrow-ink: #ffffff;
+  --arrow-ink: var(--start-ink, #ffffff);
   --arrow-body: clamp(10px, 1.3vw, 16px);
   --arrow-wing: clamp(6px, 0.75vw, 9px);
-  background: color-mix(in srgb, var(--start-color, var(--red)) 82%, var(--surface)) !important;
+  background: color-mix(in srgb, var(--start-color, var(--red)) 88%, var(--surface)) !important;
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--start-color, var(--red)) 54%, white);
 }
 
@@ -567,7 +590,7 @@ input:focus {
   height: 30%;
   border: 0;
   border-radius: 0;
-  background: #ffffff;
+  background: var(--start-ink, #ffffff);
   box-shadow: 0 3px 8px rgba(32, 33, 36, 0.18);
   clip-path: polygon(50% 0%, 61% 34%, 98% 35%, 68% 55%, 79% 91%, 50% 69%, 21% 91%, 32% 55%, 2% 35%, 39% 34%);
   content: "";
@@ -589,26 +612,30 @@ input:focus {
 }
 
 .cell.start-red {
-  --start-color: var(--player-red, var(--red));
+  --start-color: var(--player-red-board, var(--player-red, var(--red)));
+  --start-ink: var(--player-red-board-ink, #ffffff);
 }
 
 .cell.start-blue {
-  --start-color: var(--player-blue, var(--blue));
+  --start-color: var(--player-blue-board, var(--player-blue, var(--blue)));
+  --start-ink: var(--player-blue-board-ink, #ffffff);
 }
 
 .cell.start-yellow {
-  --start-color: var(--player-yellow, var(--yellow));
+  --start-color: var(--player-yellow-board, var(--player-yellow, var(--yellow)));
+  --start-ink: var(--player-yellow-board-ink, #10233f);
 }
 
 .cell.start-green {
-  --start-color: var(--player-green, var(--green));
+  --start-color: var(--player-green-board, var(--player-green, var(--green)));
+  --start-ink: var(--player-green-board-ink, #ffffff);
 }
 
 .cell.home-arrow {
   --arrow-body: clamp(10px, 1.35vw, 17px);
   --arrow-wing: clamp(6px, 0.8vw, 10px);
   --arrow-color: var(--red);
-  --arrow-ink: var(--arrow-color);
+  --arrow-ink: var(--arrow-ink-color, var(--arrow-color));
   background: color-mix(in srgb, var(--arrow-color) 14%, var(--surface)) !important;
 }
 
@@ -623,19 +650,23 @@ input:focus {
 }
 
 .cell.home-arrow-red {
-  --arrow-color: var(--player-red, var(--red));
+  --arrow-color: var(--player-red-board, var(--player-red, var(--red)));
+  --arrow-ink-color: var(--player-red-board-ink, #ffffff);
 }
 
 .cell.home-arrow-blue {
-  --arrow-color: var(--player-blue, var(--blue));
+  --arrow-color: var(--player-blue-board, var(--player-blue, var(--blue)));
+  --arrow-ink-color: var(--player-blue-board-ink, #ffffff);
 }
 
 .cell.home-arrow-yellow {
-  --arrow-color: var(--player-yellow, var(--yellow));
+  --arrow-color: var(--player-yellow-board, var(--player-yellow, var(--yellow)));
+  --arrow-ink-color: var(--player-yellow-board-ink, #10233f);
 }
 
 .cell.home-arrow-green {
-  --arrow-color: var(--player-green, var(--green));
+  --arrow-color: var(--player-green-board, var(--player-green, var(--green)));
+  --arrow-ink-color: var(--player-green-board-ink, #ffffff);
 }
 
 .cell.arrow-right::after {
@@ -663,19 +694,39 @@ input:focus {
 }
 
 .cell.safe-red::before {
-  background: var(--player-red, var(--red));
+  background: var(--player-red-board, var(--player-red, var(--red)));
 }
 
 .cell.safe-blue::before {
-  background: var(--player-blue, var(--blue));
+  background: var(--player-blue-board, var(--player-blue, var(--blue)));
 }
 
 .cell.safe-yellow::before {
-  background: var(--player-yellow, var(--yellow));
+  background: var(--player-yellow-board, var(--player-yellow, var(--yellow)));
 }
 
 .cell.safe-green::before {
-  background: var(--player-green, var(--green));
+  background: var(--player-green-board, var(--player-green, var(--green)));
+}
+
+.cell.safe-red {
+  --safe-color: var(--player-red-board, var(--player-red, var(--red)));
+  --safe-ink: var(--player-red-board-ink, #ffffff);
+}
+
+.cell.safe-blue {
+  --safe-color: var(--player-blue-board, var(--player-blue, var(--blue)));
+  --safe-ink: var(--player-blue-board-ink, #ffffff);
+}
+
+.cell.safe-yellow {
+  --safe-color: var(--player-yellow-board, var(--player-yellow, var(--yellow)));
+  --safe-ink: var(--player-yellow-board-ink, #10233f);
+}
+
+.cell.safe-green {
+  --safe-color: var(--player-green-board, var(--player-green, var(--green)));
+  --safe-ink: var(--player-green-board-ink, #ffffff);
 }
 
 .cell.home,
@@ -685,22 +736,22 @@ input:focus {
 
 .home-red,
 .yard-red {
-  background: color-mix(in srgb, var(--player-red, var(--red)) 82%, white);
+  background: color-mix(in srgb, var(--player-red-board, var(--player-red, var(--red))) 82%, white);
 }
 
 .home-blue,
 .yard-blue {
-  background: color-mix(in srgb, var(--player-blue, var(--blue)) 82%, white);
+  background: color-mix(in srgb, var(--player-blue-board, var(--player-blue, var(--blue))) 82%, white);
 }
 
 .home-yellow,
 .yard-yellow {
-  background: color-mix(in srgb, var(--player-yellow, var(--yellow)) 82%, white);
+  background: color-mix(in srgb, var(--player-yellow-board, var(--player-yellow, var(--yellow))) 82%, white);
 }
 
 .home-green,
 .yard-green {
-  background: color-mix(in srgb, var(--player-green, var(--green)) 82%, white);
+  background: color-mix(in srgb, var(--player-green-board, var(--player-green, var(--green))) 82%, white);
 }
 
 :root[data-theme="dark"] .cell.path {
@@ -711,28 +762,28 @@ input:focus {
 .cell.yard.yard-red,
 :root[data-theme="dark"] .cell.home.home-red,
 :root[data-theme="dark"] .cell.yard.yard-red {
-  background: color-mix(in srgb, var(--player-red, var(--red)) 82%, var(--surface)) !important;
+  background: color-mix(in srgb, var(--player-red-board, var(--player-red, var(--red))) 82%, var(--surface)) !important;
 }
 
 .cell.home.home-blue,
 .cell.yard.yard-blue,
 :root[data-theme="dark"] .cell.home.home-blue,
 :root[data-theme="dark"] .cell.yard.yard-blue {
-  background: color-mix(in srgb, var(--player-blue, var(--blue)) 82%, var(--surface)) !important;
+  background: color-mix(in srgb, var(--player-blue-board, var(--player-blue, var(--blue))) 82%, var(--surface)) !important;
 }
 
 .cell.home.home-yellow,
 .cell.yard.yard-yellow,
 :root[data-theme="dark"] .cell.home.home-yellow,
 :root[data-theme="dark"] .cell.yard.yard-yellow {
-  background: color-mix(in srgb, var(--player-yellow, var(--yellow)) 82%, var(--surface)) !important;
+  background: color-mix(in srgb, var(--player-yellow-board, var(--player-yellow, var(--yellow))) 82%, var(--surface)) !important;
 }
 
 .cell.home.home-green,
 .cell.yard.yard-green,
 :root[data-theme="dark"] .cell.home.home-green,
 :root[data-theme="dark"] .cell.yard.yard-green {
-  background: color-mix(in srgb, var(--player-green, var(--green)) 82%, var(--surface)) !important;
+  background: color-mix(in srgb, var(--player-green-board, var(--player-green, var(--green))) 82%, var(--surface)) !important;
 }
 
 .center {
@@ -767,39 +818,39 @@ input:focus {
 }
 
 .finish-red {
-  background: var(--player-red, var(--red));
+  background: var(--player-red-board, var(--player-red, var(--red)));
   clip-path: polygon(0 0, 50% 50%, 0 100%);
 }
 
 .finish-blue {
-  background: var(--player-blue, var(--blue));
+  background: var(--player-blue-board, var(--player-blue, var(--blue)));
   clip-path: polygon(0 0, 100% 0, 50% 50%);
 }
 
 .finish-yellow {
-  background: var(--player-yellow, var(--yellow));
+  background: var(--player-yellow-board, var(--player-yellow, var(--yellow)));
   clip-path: polygon(100% 0, 100% 100%, 50% 50%);
 }
 
 .finish-green {
-  background: var(--player-green, var(--green));
+  background: var(--player-green-board, var(--player-green, var(--green)));
   clip-path: polygon(0 100%, 50% 50%, 100% 100%);
 }
 
 :root[data-theme="dark"] .finish-red {
-  background: color-mix(in srgb, var(--player-red, var(--red)) 86%, #121821);
+  background: color-mix(in srgb, var(--player-red-board, var(--player-red, var(--red))) 86%, #121821);
 }
 
 :root[data-theme="dark"] .finish-blue {
-  background: color-mix(in srgb, var(--player-blue, var(--blue)) 86%, #121821);
+  background: color-mix(in srgb, var(--player-blue-board, var(--player-blue, var(--blue))) 86%, #121821);
 }
 
 :root[data-theme="dark"] .finish-yellow {
-  background: color-mix(in srgb, var(--player-yellow, var(--yellow)) 86%, #121821);
+  background: color-mix(in srgb, var(--player-yellow-board, var(--player-yellow, var(--yellow))) 86%, #121821);
 }
 
 :root[data-theme="dark"] .finish-green {
-  background: color-mix(in srgb, var(--player-green, var(--green)) 86%, #121821);
+  background: color-mix(in srgb, var(--player-green-board, var(--player-green, var(--green))) 86%, #121821);
 }
 
 .token-layer {
@@ -825,9 +876,9 @@ input:focus {
   grid-area: 1 / 1;
   width: clamp(17px, 2.2vw, 28px);
   height: clamp(17px, 2.2vw, 28px);
-  border: 2px solid rgba(255, 255, 255, 0.85);
+  border: 2px solid var(--token-ring, rgba(255, 255, 255, 0.85));
   border-radius: 999px;
-  color: #ffffff;
+  color: var(--token-ink, #ffffff);
   box-shadow: 0 6px 12px rgba(32, 33, 36, 0.22);
   font-size: 0.65rem;
   font-weight: 900;
@@ -849,13 +900,14 @@ input:focus {
   display: grid;
   place-items: center;
   z-index: 4;
+  color: var(--preview-ink, #ffffff);
   pointer-events: none;
 }
 
 .landing-preview::before {
   width: 68%;
   height: 68%;
-  border: 3px dashed rgba(255, 255, 255, 0.95);
+  border: 3px dashed var(--preview-ring, rgba(255, 255, 255, 0.95));
   border-radius: 999px;
   background: inherit;
   opacity: 0.72;
@@ -1165,8 +1217,17 @@ input:focus {
 }
 
 .turn-colour-name {
+  display: inline-grid;
+  place-items: center;
+  margin-left: 6px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--colour-name-ink, #ffffff);
+  background: var(--colour-name-bg, var(--turn-color, #0b57d0));
   font-weight: 900;
-  text-shadow: 0 1px 8px color-mix(in srgb, currentColor 18%, transparent);
+  font-size: 0.82em;
+  vertical-align: 0.08em;
+  box-shadow: inset 0 0 0 1px var(--turn-ring, rgba(255, 255, 255, 0.45));
 }
 
 .is-my-turn .turn-hint {
@@ -1352,9 +1413,9 @@ input:focus {
 .colour-preview {
   width: 42px;
   height: 42px;
-  border: 3px solid rgba(255, 255, 255, 0.85);
+  border: 3px solid var(--preview-ring, rgba(255, 255, 255, 0.85));
   border-radius: 16px;
-  box-shadow: 0 8px 18px rgba(60, 64, 67, 0.18);
+  box-shadow: 0 8px 18px rgba(60, 64, 67, 0.18), 0 0 0 1px var(--outline);
 }
 
 .colour-swatches {
@@ -1379,7 +1440,7 @@ input:focus {
   height: 28px;
   border: 3px solid rgba(255, 255, 255, 0.85);
   border-radius: 999px;
-  box-shadow: 0 4px 12px rgba(60, 64, 67, 0.16);
+  box-shadow: 0 4px 12px rgba(60, 64, 67, 0.16), 0 0 0 1px var(--outline);
 }
 
 .colour-swatch.selected {

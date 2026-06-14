@@ -11,6 +11,8 @@ const defaultPalette = [
   { id: "green", label: "Green", color: colors.green, seat: 3 }
 ];
 const namedColours = [
+  { name: "Black", color: "#000000" },
+  { name: "Charcoal", color: "#263238" },
   { name: "Red", color: "#ea4335" },
   { name: "Rose", color: "#e91e63" },
   { name: "Coral", color: "#ff7043" },
@@ -29,7 +31,9 @@ const namedColours = [
   { name: "Purple", color: "#8e24aa" },
   { name: "Magenta", color: "#d81b60" },
   { name: "Brown", color: "#8d6e63" },
-  { name: "Slate", color: "#607d8b" }
+  { name: "Slate", color: "#607d8b" },
+  { name: "Grey", color: "#777777" },
+  { name: "White", color: "#ffffff" }
 ];
 const HOME_ENTRY = 51;
 const HOME_FINISH = 56;
@@ -296,8 +300,15 @@ function render() {
 }
 
 function applyPlayerColourVariables() {
+  const root = document.documentElement;
   state.players.forEach((player) => {
-    document.documentElement.style.setProperty(`--player-${player.id}`, colorFor(player.id));
+    const base = colorFor(player.id);
+    const board = boardColorFor(base);
+    root.style.setProperty(`--player-${player.id}`, base);
+    root.style.setProperty(`--player-${player.id}-board`, board);
+    root.style.setProperty(`--player-${player.id}-ink`, contrastTextFor(base));
+    root.style.setProperty(`--player-${player.id}-ring`, ringColorFor(base));
+    root.style.setProperty(`--player-${player.id}-board-ink`, contrastTextFor(board));
   });
 }
 
@@ -314,6 +325,22 @@ function colourNameFor(color) {
 
 function playerColorVar(playerId) {
   return `var(--player-${playerId}, ${colors[playerId] || "#0b57d0"})`;
+}
+
+function playerBoardColorVar(playerId) {
+  return `var(--player-${playerId}-board, var(--player-${playerId}, ${colors[playerId] || "#0b57d0"}))`;
+}
+
+function playerInkVar(playerId) {
+  return `var(--player-${playerId}-ink, #ffffff)`;
+}
+
+function playerRingVar(playerId) {
+  return `var(--player-${playerId}-ring, rgba(255, 255, 255, 0.88))`;
+}
+
+function playerBoardInkVar(playerId) {
+  return `var(--player-${playerId}-board-ink, #ffffff)`;
 }
 
 function amHost() {
@@ -359,6 +386,49 @@ function hexToRgb(color) {
   };
 }
 
+function rgbToHex({ r, g, b }) {
+  return `#${[r, g, b].map((value) => Math.round(value).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function mixHex(left, right, amount) {
+  const a = hexToRgb(left);
+  const b = hexToRgb(right);
+  return rgbToHex({
+    r: a.r + (b.r - a.r) * amount,
+    g: a.g + (b.g - a.g) * amount,
+    b: a.b + (b.b - a.b) * amount
+  });
+}
+
+function relativeLuminance(color) {
+  const { r, g, b } = hexToRgb(color);
+  const channels = [r, g, b].map((value) => {
+    const channel = value / 255;
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+}
+
+function contrastTextFor(color) {
+  return relativeLuminance(color) < 0.46 ? "#ffffff" : "#10233f";
+}
+
+function ringColorFor(color) {
+  const luminance = relativeLuminance(color);
+  if (luminance < 0.14) return "#f8fafc";
+  if (luminance > 0.82) return "#243041";
+  return "rgba(255, 255, 255, 0.88)";
+}
+
+function boardColorFor(color) {
+  const luminance = relativeLuminance(color);
+  if (luminance < 0.08) return mixHex(color, "#ffffff", 0.24);
+  if (luminance < 0.16) return mixHex(color, "#ffffff", 0.16);
+  if (luminance > 0.9) return mixHex(color, "#000000", 0.14);
+  if (luminance > 0.82) return mixHex(color, "#000000", 0.08);
+  return color;
+}
+
 function colourTooClose(color) {
   return usedHumanColours().some((used) => colourDistance(color, used) < 95);
 }
@@ -400,6 +470,7 @@ function renderColourPicker() {
   const custom = selectedColour();
   const customConflict = useCustomColourInput.checked && colourTooClose(custom);
   customColourPreview.style.background = custom;
+  customColourPreview.style.setProperty("--preview-ring", ringColorFor(custom));
   colourStatus.textContent = customConflict
     ? "Custom colour too close"
     : useCustomColourInput.checked
@@ -435,7 +506,7 @@ function renderSeats() {
     const tokensHome = state.tokens[player.id].filter((position) => position === HOME_FINISH).length;
     return `
       <article class="seat ${index === state.turn && state.phase === "playing" ? "active" : ""}">
-        <div class="seat-dot" style="background:${playerColorVar(player.id)}"></div>
+        <div class="seat-dot" style="background:${playerColorVar(player.id)}; --seat-ring:${playerRingVar(player.id)}"></div>
         <div>
           <strong>${escapeHtml(seat.label)}</strong>
           <span>${mine ? `You (${seatStatus})` : seat.disconnected ? "Reconnecting" : seatStatus}</span>
@@ -495,6 +566,8 @@ function renderTokens() {
       token.style.setProperty("--stack-index", index);
       token.className = `token ${item.movable ? "movable" : ""}`;
       token.style.background = playerColorVar(item.player.id);
+      token.style.setProperty("--token-ink", playerInkVar(item.player.id));
+      token.style.setProperty("--token-ring", playerRingVar(item.player.id));
       token.textContent = item.token + 1;
       token.type = "button";
       token.disabled = !item.movable;
@@ -526,7 +599,7 @@ function renderControls() {
   } else if (state.phase === "lobby") {
     turnLabel.textContent = "Lobby";
   } else {
-    turnLabel.innerHTML = `${escapeHtml(seat.label)} <span class="turn-colour-name" style="color:${playerColorVar(player.id)}">(${escapeHtml(colourNameFor(colorFor(player.id)))})</span>`;
+    turnLabel.innerHTML = `${escapeHtml(seat.label)} <span class="turn-colour-name" style="--colour-name-bg:${playerBoardColorVar(player.id)}; --colour-name-ink:${playerBoardInkVar(player.id)}">${escapeHtml(colourNameFor(colorFor(player.id)))}</span>`;
   }
   turnHint.textContent = state.winner
     ? "Match complete. Reset the room to play again."
@@ -545,8 +618,10 @@ function renderControls() {
   startButton.disabled = state.phase === "playing";
   board.classList.toggle("my-turn", Boolean(isMyTurn && state.phase === "playing"));
   document.body.classList.toggle("is-my-turn", Boolean(isMyTurn && state.phase === "playing"));
-  const turnColor = state.phase === "playing" && player ? player.color : "#0b57d0";
+  const turnColor = state.phase === "playing" && player ? boardColorFor(player.color) : "#0b57d0";
   document.body.style.setProperty("--turn-color", turnColor);
+  document.body.style.setProperty("--turn-ink", contrastTextFor(turnColor));
+  document.body.style.setProperty("--turn-ring", ringColorFor(turnColor));
   document.body.style.setProperty("--turn-color-soft", `${turnColor}22`);
 }
 
@@ -1048,6 +1123,8 @@ function showLandingPreview(move) {
   const preview = document.createElement("div");
   preview.className = "landing-preview";
   preview.style.background = playerColorVar(move.playerId);
+  preview.style.setProperty("--preview-ring", playerRingVar(move.playerId));
+  preview.style.setProperty("--preview-ink", playerInkVar(move.playerId));
   placeOverlayItem(preview, cell);
   tokenLayer.appendChild(preview);
 }
