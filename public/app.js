@@ -42,6 +42,7 @@ const turnLabel = document.querySelector("#turnLabel");
 const diceValue = document.querySelector("#diceValue");
 const rollButton = document.querySelector("#rollDice");
 const startButton = document.querySelector("#startGame");
+const launchAssistRule = document.querySelector("#launchAssistRule");
 const resetButton = document.querySelector("#resetGame");
 const statusChip = document.querySelector("#connectionStatus");
 const setupScreen = document.querySelector("#setupScreen");
@@ -71,6 +72,7 @@ const roomBadge = document.querySelector("#roomBadge");
 const turnHint = document.querySelector("#turnHint");
 const toast = document.querySelector("#toast");
 const celebration = document.querySelector("#celebration");
+const diceRollCanvas = document.querySelector("#diceRollCanvas");
 
 const outerTrack = [
   [6, 0], [6, 1], [6, 2], [6, 3], [6, 4], [6, 5], [5, 6], [4, 6], [3, 6], [2, 6], [1, 6], [0, 6], [0, 7],
@@ -283,6 +285,7 @@ function render() {
   renderSeats();
   renderTokens();
   renderControls();
+  renderRuleSettings();
   renderLog();
   renderCelebration();
   processActivityEffects();
@@ -307,6 +310,17 @@ function colourNameFor(color) {
 
 function playerColorVar(playerId) {
   return `var(--player-${playerId}, ${colors[playerId] || "#0b57d0"})`;
+}
+
+function amHost() {
+  return state?.seats?.some((seat) => seat.clientId === clientId && seat.sessionId === state.hostSessionId);
+}
+
+function renderRuleSettings() {
+  const canEdit = state.phase === "lobby" && amHost();
+  launchAssistRule.checked = Boolean(state.settings?.launchAssist);
+  launchAssistRule.disabled = !canEdit;
+  launchAssistRule.closest(".rule-toggle").classList.toggle("locked", !canEdit);
 }
 
 function selectedSeatIndex() {
@@ -522,7 +536,8 @@ function renderControls() {
             ? "AI is thinking..."
             : "Waiting for the current player.";
   renderDice(state.dice);
-  rollButton.disabled = !(state.phase === "playing" && state.canRoll && isMyTurn);
+  rollButton.disabled = !(state.phase === "playing" && isMyTurn);
+  rollButton.classList.toggle("waiting-move", Boolean(isMyTurn && !state.canRoll));
   startButton.disabled = state.phase === "playing";
   board.classList.toggle("my-turn", Boolean(isMyTurn && state.phase === "playing"));
   document.body.classList.toggle("is-my-turn", Boolean(isMyTurn && state.phase === "playing"));
@@ -548,7 +563,7 @@ function activityDetail(message) {
   if (roll) return { type: "roll", icon: "casino", value: Number(roll[1]), color: "#8ab4f8", sound: "roll" };
   if (/captured/.test(message)) return { type: "capture", icon: "flare", color: "#ff6d00", sound: "capture" };
   if (/wins the game/.test(message)) return { type: "win", icon: "trophy", color: "#fbbc04", sound: "win" };
-  if (/moved token/.test(message)) return { type: "move", icon: "near_me", color: "#34a853", sound: "move" };
+  if (/moved token|launch assist/.test(message)) return { type: "move", icon: "near_me", color: "#34a853", sound: "move" };
   if (/no legal move/.test(message)) return { type: "blocked", icon: "block", color: "#a8b3c2", sound: "soft" };
   if (/joined|human seat|AI controlled|Room created|replaced/.test(message)) return { type: "room", icon: "groups", color: "#a142f4", sound: "soft" };
   return { type: "note", icon: "info", color: "#8ab4f8", sound: "soft" };
@@ -590,19 +605,211 @@ function seatLabel(playerId) {
 function renderDice(value) {
   if (lastDice !== value && value) {
     rollButton.classList.add("rolled");
+    animateRenderedDie(value);
     setTimeout(() => rollButton.classList.remove("rolled"), 920);
   }
   lastDice = value;
   diceValue.dataset.value = value || 0;
-  diceValue.innerHTML = value
-    ? diceCubeMarkup()
-    : "Roll";
+  diceValue.textContent = value || "Roll";
 }
 
-function diceCubeMarkup() {
-  return [1, 2, 3, 4, 5, 6]
-    .map((value) => `<span class="die-face die-face-${value}" data-face="${value}">${Array.from({ length: 9 }, () => '<span class="die-pip"></span>').join("")}</span>`)
-    .join("");
+function animateRenderedDie(value) {
+  const context = diceRollCanvas.getContext("2d");
+  if (!context) return;
+  const scale = window.devicePixelRatio || 1;
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  diceRollCanvas.width = Math.round(width * scale);
+  diceRollCanvas.height = Math.round(height * scale);
+  diceRollCanvas.style.width = `${width}px`;
+  diceRollCanvas.style.height = `${height}px`;
+  context.setTransform(scale, 0, 0, scale, 0, 0);
+  diceRollCanvas.classList.add("show");
+
+  const rollRect = rollButton.getBoundingClientRect();
+  const boardRect = board.getBoundingClientRect();
+  const start = {
+    x: rollRect.left + rollRect.width / 2,
+    y: rollRect.top + rollRect.height / 2
+  };
+  const end = {
+    x: Math.min(width - 90, Math.max(90, boardRect.left + boardRect.width * 0.72)),
+    y: Math.min(height - 90, Math.max(90, boardRect.top + boardRect.height * 0.22))
+  };
+  const duration = 980;
+  const startedAt = performance.now();
+
+  cancelAnimationFrame(animateRenderedDie.frame);
+  function frame(now) {
+    const progress = Math.min(1, (now - startedAt) / duration);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const arc = Math.sin(progress * Math.PI) * 120;
+    const spin = progress * Math.PI * 4.7;
+    const wobble = Math.sin(progress * Math.PI * 6) * (1 - progress) * 0.55;
+    const settle = progress < 0.78 ? 0 : (progress - 0.78) / 0.22;
+    const position = {
+      x: start.x + (end.x - start.x) * eased,
+      y: start.y + (end.y - start.y) * eased - arc
+    };
+    const rotation = settledRotationFor(value);
+    const angles = {
+      x: rotation.x * settle + spin * (1 - settle) + wobble,
+      y: rotation.y * settle + spin * 0.78 * (1 - settle) - wobble,
+      z: rotation.z * settle + spin * 0.32 * (1 - settle)
+    };
+
+    context.clearRect(0, 0, width, height);
+    drawDie(context, position.x, position.y, 44 + Math.sin(progress * Math.PI) * 10, angles);
+
+    if (progress < 1) {
+      animateRenderedDie.frame = requestAnimationFrame(frame);
+    } else {
+      setTimeout(() => {
+        diceRollCanvas.classList.remove("show");
+        context.clearRect(0, 0, width, height);
+      }, 260);
+    }
+  }
+
+  animateRenderedDie.frame = requestAnimationFrame(frame);
+}
+
+function settledRotationFor(value) {
+  return {
+    1: { x: 0, y: 0, z: -0.12 },
+    2: { x: 0, y: -Math.PI / 2, z: 0.1 },
+    3: { x: -Math.PI / 2, y: 0, z: -0.08 },
+    4: { x: Math.PI / 2, y: 0, z: 0.08 },
+    5: { x: 0, y: Math.PI / 2, z: -0.1 },
+    6: { x: 0, y: Math.PI, z: 0.12 }
+  }[value] || { x: 0, y: 0, z: 0 };
+}
+
+const dieFaces = [
+  { value: 1, normal: [0, 0, 1], center: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] },
+  { value: 6, normal: [0, 0, -1], center: [0, 0, -1], u: [-1, 0, 0], v: [0, 1, 0] },
+  { value: 2, normal: [1, 0, 0], center: [1, 0, 0], u: [0, 0, -1], v: [0, 1, 0] },
+  { value: 5, normal: [-1, 0, 0], center: [-1, 0, 0], u: [0, 0, 1], v: [0, 1, 0] },
+  { value: 3, normal: [0, 1, 0], center: [0, 1, 0], u: [1, 0, 0], v: [0, 0, -1] },
+  { value: 4, normal: [0, -1, 0], center: [0, -1, 0], u: [1, 0, 0], v: [0, 0, 1] }
+];
+
+function drawDie(context, x, y, size, angles) {
+  const light = normalize3d([-0.35, -0.55, 1]);
+  const faces = dieFaces.map((face) => {
+    const points = [
+      add3d(add3d(face.center, scale3d(face.u, -1)), scale3d(face.v, -1)),
+      add3d(add3d(face.center, scale3d(face.u, 1)), scale3d(face.v, -1)),
+      add3d(add3d(face.center, scale3d(face.u, 1)), scale3d(face.v, 1)),
+      add3d(add3d(face.center, scale3d(face.u, -1)), scale3d(face.v, 1))
+    ].map((point) => rotate3d(point, angles));
+    const normal = rotate3d(face.normal, angles);
+    return {
+      ...face,
+      points,
+      normal,
+      angles,
+      shade: Math.max(0.48, Math.min(1, 0.64 + dot3d(normal, light) * 0.36)),
+      depth: points.reduce((sum, point) => sum + point[2], 0) / points.length
+    };
+  }).sort((left, right) => left.depth - right.depth);
+
+  context.save();
+  context.shadowColor = "rgba(0, 0, 0, 0.28)";
+  context.shadowBlur = 28;
+  context.shadowOffsetY = 18;
+  drawBlobShadow(context, x, y, size);
+  context.shadowColor = "transparent";
+
+  faces.forEach((face) => {
+    if (face.normal[2] < -0.15) return;
+    const polygon = face.points.map((point) => project3d(point, x, y, size));
+    context.beginPath();
+    polygon.forEach((point, index) => index ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y));
+    context.closePath();
+    const tone = Math.round(238 * face.shade);
+    context.fillStyle = `rgb(${tone + 14}, ${tone + 16}, ${tone + 18})`;
+    context.strokeStyle = `rgba(33, 48, 70, ${0.22 + (1 - face.shade) * 0.22})`;
+    context.lineWidth = 2;
+    context.fill();
+    context.stroke();
+    drawProjectedPips(context, face, x, y, size);
+  });
+  context.restore();
+}
+
+function drawBlobShadow(context, x, y, size) {
+  context.beginPath();
+  context.ellipse(x, y + size * 1.15, size * 0.9, size * 0.24, 0, 0, Math.PI * 2);
+  context.fillStyle = "rgba(0, 0, 0, 0.18)";
+  context.fill();
+}
+
+function drawProjectedPips(context, face, x, y, size) {
+  const positions = pipPositions(face.value);
+  positions.forEach(([px, py]) => {
+    const local = add3d(face.center, add3d(scale3d(face.u, px * 0.48), scale3d(face.v, py * 0.48)));
+    const rotated = project3d(rotate3d(local, face.angles), x, y, size);
+    const radius = Math.max(3.5, size * 0.095 * Math.max(0.45, rotated.perspective));
+    context.beginPath();
+    context.arc(rotated.x, rotated.y, radius, 0, Math.PI * 2);
+    context.fillStyle = "rgba(11, 31, 58, 0.9)";
+    context.fill();
+  });
+}
+
+function pipPositions(value) {
+  const far = 0.72;
+  const mid = 0;
+  return {
+    1: [[mid, mid]],
+    2: [[-far, -far], [far, far]],
+    3: [[-far, -far], [mid, mid], [far, far]],
+    4: [[-far, -far], [far, -far], [-far, far], [far, far]],
+    5: [[-far, -far], [far, -far], [mid, mid], [-far, far], [far, far]],
+    6: [[-far, -far], [far, -far], [-far, mid], [far, mid], [-far, far], [far, far]]
+  }[value] || [];
+}
+
+function project3d(point, x, y, size) {
+  const distance = 4.2;
+  const perspective = distance / (distance - point[2]);
+  return {
+    x: x + point[0] * size * perspective,
+    y: y + point[1] * size * perspective,
+    perspective
+  };
+}
+
+function rotate3d(point, angles) {
+  let [x, y, z] = point;
+  const cosX = Math.cos(angles.x);
+  const sinX = Math.sin(angles.x);
+  [y, z] = [y * cosX - z * sinX, y * sinX + z * cosX];
+  const cosY = Math.cos(angles.y);
+  const sinY = Math.sin(angles.y);
+  [x, z] = [x * cosY + z * sinY, -x * sinY + z * cosY];
+  const cosZ = Math.cos(angles.z);
+  const sinZ = Math.sin(angles.z);
+  [x, y] = [x * cosZ - y * sinZ, x * sinZ + y * cosZ];
+  return [x, y, z];
+}
+
+function add3d(left, right) {
+  return [left[0] + right[0], left[1] + right[1], left[2] + right[2]];
+}
+
+function scale3d(point, scale) {
+  return [point[0] * scale, point[1] * scale, point[2] * scale];
+}
+
+function dot3d(left, right) {
+  return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+}
+
+function normalize3d(point) {
+  const length = Math.hypot(point[0], point[1], point[2]) || 1;
+  return [point[0] / length, point[1] / length, point[2] / length];
 }
 
 function processActivityEffects() {
@@ -886,6 +1093,10 @@ motionToggleButton.addEventListener("click", () => {
   applyMotion(!document.body.classList.contains("motion-bg"));
 });
 
+launchAssistRule.addEventListener("change", () => {
+  send({ type: "settings", launchAssist: launchAssistRule.checked });
+});
+
 setupRoomCodeInput.addEventListener("input", () => {
   clearTimeout(roomPreviewTimer);
   roomPreviewTimer = setTimeout(loadRoomPreview, 280);
@@ -918,6 +1129,10 @@ startButton.addEventListener("click", () => {
 resetButton.addEventListener("click", () => send({ type: "reset" }));
 rollButton.addEventListener("click", () => {
   ensureAudio();
+  if (state && !state.canRoll) {
+    showToast("Choose a highlighted token first");
+    return;
+  }
   send({ type: "roll" });
 });
 window.addEventListener("beforeunload", () => disconnect(false));

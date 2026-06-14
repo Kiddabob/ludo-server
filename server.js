@@ -59,6 +59,10 @@ function createGame(roomCode) {
     dice: null,
     canRoll: true,
     winner: null,
+    settings: {
+      launchAssist: false
+    },
+    launchMisses: Object.fromEntries(players.map((player) => [player.id, 0])),
     log: ["Room created. Invite friends or let AI take the open seats."],
     tokens: Object.fromEntries(players.map((player) => [player.id, [-1, -1, -1, -1]]))
   };
@@ -169,6 +173,10 @@ function isHumanTurn(game, clientId) {
   return seat && seat.type === "human" && seat.clientId === clientId && !seat.disconnected;
 }
 
+function isHostClient(game, clientId) {
+  return game.seats.some((seat) => seat.clientId === clientId && seat.sessionId === game.hostSessionId);
+}
+
 function pathIndexFor(player, value) {
   if (value < 0 || value > HOME_FINISH) return null;
   if (value < HOME_ENTRY) return (player.start + value) % 52;
@@ -195,6 +203,21 @@ function nextTurn(game, keepTurn = false) {
   game.canRoll = true;
 }
 
+function hasNoLaunchedTokens(game, playerId) {
+  return game.tokens[playerId].every((position) => position === -1);
+}
+
+function launchAssistToken(game, seat) {
+  if (!game.settings?.launchAssist || !hasNoLaunchedTokens(game, seat.playerId)) return false;
+  game.launchMisses[seat.playerId] = (game.launchMisses[seat.playerId] || 0) + 1;
+  if (game.launchMisses[seat.playerId] < 6) return false;
+
+  game.tokens[seat.playerId][0] = 0;
+  game.launchMisses[seat.playerId] = 0;
+  addLog(game, `${seat.label} received launch assist and entered token 1.`);
+  return true;
+}
+
 function rollDice(game, clientId = null) {
   if (game.phase !== "playing" || game.winner || !game.canRoll) return;
   if (clientId && !isHumanTurn(game, clientId)) return;
@@ -206,8 +229,9 @@ function rollDice(game, clientId = null) {
 
   const moves = availableMoves(game, seat.playerId, game.dice);
   if (!moves.length) {
-    addLog(game, `${seat.label} has no legal move.`);
-    nextTurn(game, game.dice === 6);
+    const assisted = game.dice !== 6 && launchAssistToken(game, seat);
+    if (!assisted) addLog(game, `${seat.label} has no legal move.`);
+    nextTurn(game, game.dice === 6 || assisted);
   }
 }
 
@@ -239,6 +263,7 @@ function moveToken(game, clientId, token) {
   if (!move) return;
 
   game.tokens[seat.playerId][token] = move.to;
+  if (move.from === -1) game.launchMisses[seat.playerId] = 0;
   const captures = captureTokens(game, seat.playerId, move.boardIndex);
   const finished = move.to === HOME_FINISH;
   addLog(game, `${seat.label} moved token ${token + 1}${captures ? ` and captured ${captures}` : ""}.`);
@@ -296,8 +321,11 @@ function startGame(game) {
   game.dice = null;
   game.canRoll = true;
   game.winner = null;
+  game.launchMisses = Object.fromEntries(players.map((player) => [player.id, 0]));
   game.tokens = Object.fromEntries(players.map((player) => [player.id, [-1, -1, -1, -1]]));
-  addLog(game, "Game started. Roll a six to launch a token.");
+  addLog(game, game.settings?.launchAssist
+    ? "Game started with launch assist. A 6th failed launch attempt enters one token."
+    : "Game started with classic launch rules. Roll a six to launch a token.");
 }
 
 function broadcast(room) {
@@ -427,6 +455,14 @@ function handleMessage(room, clientId, message) {
       refreshAiSeatColors(game);
       addLog(game, `${players[message.seat].name} is now ${wantsHuman ? "a human seat" : "AI controlled"}.`);
     }
+  }
+
+  if (message.type === "settings" && game.phase === "lobby" && isHostClient(game, clientId)) {
+    game.settings = {
+      ...game.settings,
+      launchAssist: Boolean(message.launchAssist)
+    };
+    addLog(game, game.settings.launchAssist ? "Launch assist rule enabled." : "Classic launch rule enabled.");
   }
 
   if (message.type === "start") startGame(game);
@@ -589,5 +625,6 @@ module.exports = {
   pathIndexFor,
   players,
   refreshAiSeatColors,
+  rollDice,
   server
 };

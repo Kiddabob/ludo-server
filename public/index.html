@@ -91,6 +91,13 @@
               </div>
               <button id="startGame" class="primary" type="button">Start</button>
             </div>
+            <label class="rule-toggle">
+              <input id="launchAssistRule" type="checkbox">
+              <span>
+                <strong>Launch assist</strong>
+                <small>After 5 failed launch rolls, the 6th attempt places one token on the board.</small>
+              </span>
+            </label>
             <div id="seats" class="seats"></div>
             <div class="room-card">
               <span>Room code</span>
@@ -111,7 +118,7 @@
                 <p id="turnHint" class="turn-hint">Join a room to begin.</p>
               </div>
               <button id="rollDice" class="dice-button" type="button" aria-label="Roll dice">
-                <span id="diceValue" class="dice-cube" data-value="0"><span class="dice-idle">Roll</span></span>
+                <span id="diceValue" class="dice-result" data-value="0">Roll</span>
               </button>
             </div>
           </section>
@@ -133,6 +140,7 @@
 
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
       <div id="celebration" class="celebration" aria-hidden="true"></div>
+      <canvas id="diceRollCanvas" class="dice-roll-canvas" aria-hidden="true"></canvas>
     </main>
 
     <script src="/app.js"></script>
