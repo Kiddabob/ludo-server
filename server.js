@@ -57,6 +57,8 @@ function createGame(roomCode) {
     hostSessionId: null,
     turn: 0,
     dice: null,
+    rollId: 0,
+    lastRoll: null,
     canRoll: true,
     winner: null,
     settings: {
@@ -224,6 +226,12 @@ function rollDice(game, clientId = null) {
 
   const seat = currentSeat(game);
   game.dice = 1 + Math.floor(Math.random() * 6);
+  game.rollId += 1;
+  game.lastRoll = {
+    id: game.rollId,
+    playerId: seat.playerId,
+    value: game.dice
+  };
   game.canRoll = false;
   addLog(game, `${seat.label} rolled a ${game.dice}.`);
 
@@ -319,6 +327,8 @@ function startGame(game) {
   game.phase = "playing";
   game.turn = 0;
   game.dice = null;
+  game.rollId = 0;
+  game.lastRoll = null;
   game.canRoll = true;
   game.winner = null;
   game.launchMisses = Object.fromEntries(players.map((player) => [player.id, 0]));

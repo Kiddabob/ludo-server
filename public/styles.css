@@ -304,6 +304,7 @@ input:focus {
 }
 
 .panel {
+  min-width: 0;
   padding: 18px;
 }
 
@@ -320,6 +321,7 @@ input:focus {
   display: grid;
   gap: 12px;
   margin: 18px 0;
+  min-width: 0;
 }
 
 .rule-toggle {
@@ -358,13 +360,20 @@ input:focus {
 
 .seat {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding: 12px;
   border-radius: 24px;
   background: var(--surface-strong);
   transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease;
+}
+
+.seat > div:not(.seat-dot) {
+  min-width: 0;
 }
 
 .seat.active {
@@ -381,7 +390,13 @@ input:focus {
 }
 
 .seat strong {
-  display: block;
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+  line-height: 1.08;
 }
 
 .seat span {
@@ -399,11 +414,15 @@ input:focus {
 
 .seat button {
   min-width: 74px;
+  max-width: 92px;
+  overflow: hidden;
   border-radius: 999px;
   padding: 10px 12px;
   color: var(--primary);
   background: var(--surface);
   font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .seat button:disabled {
@@ -957,7 +976,7 @@ input:focus {
 
 .dice-result[data-value="0"] {
   color: var(--primary);
-  font-size: 1rem;
+  font-size: 0.82rem;
 }
 
 :root[data-theme="dark"] .dice-result {
@@ -974,11 +993,15 @@ input:focus {
   height: 100vh;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 120ms ease;
+  transition: opacity 680ms ease;
 }
 
 .dice-roll-canvas.show {
   opacity: 1;
+}
+
+.dice-roll-canvas.show.landed {
+  opacity: 0.96;
 }
 
 .dice-cube {

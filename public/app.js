@@ -113,6 +113,10 @@ let connectionToken = 0;
 let shouldReconnect = false;
 let lastTurnSignature = "";
 let lastDice = null;
+let lastRollId = 0;
+let diceAnimationActive = false;
+let diceRevealTimer;
+let diceClearTimer;
 let previousState = null;
 let selectedColourId = "red";
 let roomPreviewState = null;
@@ -603,17 +607,42 @@ function seatLabel(playerId) {
 }
 
 function renderDice(value) {
-  if (lastDice !== value && value) {
+  const roll = state.lastRoll;
+  if (roll?.id && roll.id !== lastRollId) {
+    lastRollId = roll.id;
+    clearTimeout(diceRevealTimer);
+    clearTimeout(diceClearTimer);
+    diceAnimationActive = true;
     rollButton.classList.add("rolled");
-    animateRenderedDie(value);
-    setTimeout(() => rollButton.classList.remove("rolled"), 920);
+    diceValue.dataset.value = 0;
+    diceValue.textContent = "Rolling";
+    animateRenderedDie(roll.value, () => {
+      diceValue.dataset.value = roll.value;
+      diceValue.textContent = roll.value;
+    }, () => {
+      diceAnimationActive = false;
+      if (!state?.dice) {
+        diceValue.dataset.value = 0;
+        diceValue.textContent = "Roll";
+      }
+    });
+    setTimeout(() => rollButton.classList.remove("rolled"), 1650);
+  } else if (!value && !diceAnimationActive) {
+    clearTimeout(diceRevealTimer);
+    clearTimeout(diceClearTimer);
+    diceRollCanvas.classList.remove("show", "landed");
+    const context = diceRollCanvas.getContext("2d");
+    context?.clearRect(0, 0, diceRollCanvas.width, diceRollCanvas.height);
+    diceValue.dataset.value = 0;
+    diceValue.textContent = "Roll";
+  } else if (diceValue.textContent !== "Rolling") {
+    diceValue.dataset.value = value;
+    diceValue.textContent = value;
   }
   lastDice = value;
-  diceValue.dataset.value = value || 0;
-  diceValue.textContent = value || "Roll";
 }
 
-function animateRenderedDie(value) {
+function animateRenderedDie(value, onReveal, onComplete) {
   const context = diceRollCanvas.getContext("2d");
   if (!context) return;
   const scale = window.devicePixelRatio || 1;
@@ -624,32 +653,44 @@ function animateRenderedDie(value) {
   diceRollCanvas.style.width = `${width}px`;
   diceRollCanvas.style.height = `${height}px`;
   context.setTransform(scale, 0, 0, scale, 0, 0);
+  diceRollCanvas.classList.remove("landed");
   diceRollCanvas.classList.add("show");
 
   const rollRect = rollButton.getBoundingClientRect();
-  const boardRect = board.getBoundingClientRect();
   const start = {
     x: rollRect.left + rollRect.width / 2,
     y: rollRect.top + rollRect.height / 2
   };
   const end = {
-    x: Math.min(width - 90, Math.max(90, boardRect.left + boardRect.width * 0.72)),
-    y: Math.min(height - 90, Math.max(90, boardRect.top + boardRect.height * 0.22))
+    x: clamp(width * 0.52, 96, width - 96),
+    y: clamp(height * 0.42, 96, height - 120)
   };
-  const duration = 980;
+  const controlA = {
+    x: clamp(width * 0.08, 70, width - 70),
+    y: clamp(height * 0.1, 70, height - 70)
+  };
+  const controlB = {
+    x: clamp(width * 0.92, 70, width - 70),
+    y: clamp(height * 0.2, 70, height - 70)
+  };
+  const duration = 1480;
   const startedAt = performance.now();
+  const bounceMarks = new Set();
+  let revealed = false;
 
   cancelAnimationFrame(animateRenderedDie.frame);
   function frame(now) {
     const progress = Math.min(1, (now - startedAt) / duration);
-    const eased = 1 - Math.pow(1 - progress, 3);
-    const arc = Math.sin(progress * Math.PI) * 120;
-    const spin = progress * Math.PI * 4.7;
-    const wobble = Math.sin(progress * Math.PI * 6) * (1 - progress) * 0.55;
-    const settle = progress < 0.78 ? 0 : (progress - 0.78) / 0.22;
+    const eased = easeOutCubic(progress);
+    const base = cubicBezier(start, controlA, controlB, end, eased);
+    const bounce = Math.abs(Math.sin(progress * Math.PI * 5.2)) * (1 - progress) * 120;
+    const skid = Math.sin(progress * Math.PI * 2.6) * (1 - progress) * Math.min(110, width * 0.07);
+    const spin = progress * Math.PI * 8.4;
+    const wobble = Math.sin(progress * Math.PI * 8) * (1 - progress) * 0.6;
+    const settle = progress < 0.82 ? 0 : easeOutCubic((progress - 0.82) / 0.18);
     const position = {
-      x: start.x + (end.x - start.x) * eased,
-      y: start.y + (end.y - start.y) * eased - arc
+      x: clamp(base.x + skid, 72, width - 72),
+      y: clamp(base.y - bounce, 72, height - 82)
     };
     const rotation = settledRotationFor(value);
     const angles = {
@@ -658,20 +699,51 @@ function animateRenderedDie(value) {
       z: rotation.z * settle + spin * 0.32 * (1 - settle)
     };
 
+    [0.22, 0.43, 0.62, 0.79].forEach((mark) => {
+      if (progress >= mark && !bounceMarks.has(mark)) {
+        bounceMarks.add(mark);
+        playSound(mark > 0.7 ? "land" : "bounce");
+      }
+    });
+    if (!revealed && progress >= 0.86) {
+      revealed = true;
+      onReveal?.();
+    }
+
     context.clearRect(0, 0, width, height);
-    drawDie(context, position.x, position.y, 44 + Math.sin(progress * Math.PI) * 10, angles);
+    drawDie(context, position.x, position.y, 58 + Math.sin(progress * Math.PI) * 12, angles);
 
     if (progress < 1) {
       animateRenderedDie.frame = requestAnimationFrame(frame);
     } else {
-      setTimeout(() => {
-        diceRollCanvas.classList.remove("show");
+      if (!revealed) onReveal?.();
+      diceRollCanvas.classList.add("landed");
+      diceClearTimer = setTimeout(() => {
+        diceRollCanvas.classList.remove("show", "landed");
         context.clearRect(0, 0, width, height);
-      }, 260);
+        onComplete?.();
+      }, 2300);
     }
   }
 
   animateRenderedDie.frame = requestAnimationFrame(frame);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function easeOutCubic(value) {
+  const clamped = clamp(value, 0, 1);
+  return 1 - Math.pow(1 - clamped, 3);
+}
+
+function cubicBezier(start, controlA, controlB, end, t) {
+  const oneMinus = 1 - t;
+  return {
+    x: oneMinus ** 3 * start.x + 3 * oneMinus ** 2 * t * controlA.x + 3 * oneMinus * t ** 2 * controlB.x + t ** 3 * end.x,
+    y: oneMinus ** 3 * start.y + 3 * oneMinus ** 2 * t * controlA.y + 3 * oneMinus * t ** 2 * controlB.y + t ** 3 * end.y
+  };
 }
 
 function settledRotationFor(value) {
@@ -724,18 +796,40 @@ function drawDie(context, x, y, size, angles) {
   faces.forEach((face) => {
     if (face.normal[2] < -0.15) return;
     const polygon = face.points.map((point) => project3d(point, x, y, size));
-    context.beginPath();
-    polygon.forEach((point, index) => index ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y));
-    context.closePath();
+    roundedPolygonPath(context, polygon, size * 0.15);
     const tone = Math.round(238 * face.shade);
     context.fillStyle = `rgb(${tone + 14}, ${tone + 16}, ${tone + 18})`;
     context.strokeStyle = `rgba(33, 48, 70, ${0.22 + (1 - face.shade) * 0.22})`;
-    context.lineWidth = 2;
+    context.lineWidth = 3;
+    context.lineJoin = "round";
     context.fill();
     context.stroke();
     drawProjectedPips(context, face, x, y, size);
   });
   context.restore();
+}
+
+function roundedPolygonPath(context, points, radius) {
+  context.beginPath();
+  points.forEach((point, index) => {
+    const previous = points[(index - 1 + points.length) % points.length];
+    const next = points[(index + 1) % points.length];
+    const toPrevious = Math.hypot(point.x - previous.x, point.y - previous.y);
+    const toNext = Math.hypot(point.x - next.x, point.y - next.y);
+    const corner = Math.min(radius, toPrevious * 0.35, toNext * 0.35);
+    const start = {
+      x: point.x + (previous.x - point.x) / toPrevious * corner,
+      y: point.y + (previous.y - point.y) / toPrevious * corner
+    };
+    const end = {
+      x: point.x + (next.x - point.x) / toNext * corner,
+      y: point.y + (next.y - point.y) / toNext * corner
+    };
+    if (index === 0) context.moveTo(start.x, start.y);
+    else context.lineTo(start.x, start.y);
+    context.quadraticCurveTo(point.x, point.y, end.x, end.y);
+  });
+  context.closePath();
 }
 
 function drawBlobShadow(context, x, y, size) {
@@ -858,6 +952,18 @@ function playSound(type) {
     playTone(context, 160, 0.08, now, "triangle", 0.035);
     playTone(context, 280, 0.09, now + 0.08, "triangle", 0.035);
     playTone(context, 420, 0.12, now + 0.18, "sine", 0.035);
+    return;
+  }
+
+  if (type === "bounce") {
+    playNoise(context, now, 0.08, 0.025);
+    playTone(context, 180, 0.055, now, "triangle", 0.022);
+    return;
+  }
+
+  if (type === "land") {
+    playNoise(context, now, 0.12, 0.035);
+    playTone(context, 120, 0.08, now, "triangle", 0.03);
     return;
   }
 
