@@ -1,8 +1,17 @@
 {
-  "name": "ludo-server",
-  "private": true,
-  "type": "module",
-  "engines": { "node": ">=18" },
-  "dependencies": { "ws": "^8.18.0" },
-  "scripts": { "start": "node server.mjs" }
+  "name": "ludo-online-multiplayer",
+  "version": "1.0.0",
+  "description": "Online multiplayer Ludo with AI seat fill-ins and a Material Expressive inspired UI.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "ludo",
+    "multiplayer",
+    "websocket",
+    "game"
+  ],
+  "author": "",
+  "license": "MIT"
 }

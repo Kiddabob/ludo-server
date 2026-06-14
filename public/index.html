@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ludo Online Multiplayer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="top-bar">
+        <div>
+          <p class="eyebrow">Live room</p>
+          <h1>Ludo</h1>
+          <p class="subtitle">Online rooms with AI players ready to fill every empty seat.</p>
+        </div>
+        <form id="roomForm" class="room-form">
+          <label>
+            Room
+            <input id="roomCode" maxlength="8" value="PLAY" autocomplete="off">
+          </label>
+          <label>
+            Name
+            <input id="playerName" maxlength="18" value="Player" autocomplete="nickname">
+          </label>
+          <button class="tonal" type="submit">Join</button>
+          <button id="copyInvite" class="icon-button" type="button" title="Copy invite link" aria-label="Copy invite link">↗</button>
+        </form>
+      </section>
+
+      <section class="game-layout">
+        <aside class="panel lobby-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Seats</p>
+              <h2>Players and AI</h2>
+            </div>
+            <button id="startGame" class="primary" type="button">Start</button>
+          </div>
+          <div id="seats" class="seats"></div>
+          <div class="room-card">
+            <span>Room code</span>
+            <strong id="roomBadge">PLAY</strong>
+          </div>
+          <div class="action-row">
+            <button id="resetGame" class="text-button" type="button">Reset room</button>
+            <span id="connectionStatus" class="status-chip">Connecting</span>
+          </div>
+        </aside>
+
+        <section class="board-stage" aria-label="Ludo board">
+          <div id="board" class="board"></div>
+          <div class="turn-card">
+            <div>
+              <p class="eyebrow">Turn</p>
+              <h2 id="turnLabel">Waiting</h2>
+              <p id="turnHint" class="turn-hint">Join a room to begin.</p>
+            </div>
+            <button id="rollDice" class="dice-button" type="button" aria-label="Roll dice">
+              <span id="diceValue" class="dice-face" data-value="0">Roll</span>
+            </button>
+          </div>
+        </section>
+
+        <aside class="panel log-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Match</p>
+              <h2>Activity</h2>
+            </div>
+          </div>
+          <ol id="log" class="log"></ol>
+          <div class="rules">
+            <p>Roll a six to leave home. Captures and sixes earn another turn. Safe squares are marked with stars.</p>
+          </div>
+        </aside>
+      </section>
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+      <div id="celebration" class="celebration" aria-hidden="true"></div>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
