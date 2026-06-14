@@ -30,6 +30,16 @@ const HOME_ENTRY = 51;
 const HOME_FINISH = 56;
 const safeSquares = new Set([1, 9, 14, 22, 27, 35, 40, 48]);
 const COLOR_DISTANCE_MINIMUM = 95;
+const AI_FALLBACK_COLORS = [
+  "#a142f4",
+  "#00acc1",
+  "#e91e63",
+  "#ff6d00",
+  "#7c4dff",
+  "#00897b",
+  "#c0ca33",
+  "#8d6e63"
+];
 
 function createGame(roomCode) {
   return {
@@ -107,6 +117,27 @@ function colorIsAvailable(game, color, allowedSeatIndex = -1) {
   return game.seats.every((seat, index) => {
     if (index === allowedSeatIndex || seat.type !== "human") return true;
     return colorDistance(seat.color || defaultColorForSeat(index), color) >= COLOR_DISTANCE_MINIMUM;
+  });
+}
+
+function colorConflicts(color, takenColors) {
+  return takenColors.some((used) => colorDistance(used, color) < COLOR_DISTANCE_MINIMUM);
+}
+
+function openAiColorForSeat(index, takenColors) {
+  const candidates = [defaultColorForSeat(index), ...AI_FALLBACK_COLORS];
+  return candidates.find((color) => !colorConflicts(color, takenColors)) || defaultColorForSeat(index);
+}
+
+function refreshAiSeatColors(game) {
+  const takenColors = game.seats
+    .map((seat, index) => seat.type === "human" ? seat.color || defaultColorForSeat(index) : null)
+    .filter(Boolean);
+
+  game.seats.forEach((seat, index) => {
+    if (seat.type === "human") return;
+    seat.color = openAiColorForSeat(index, takenColors);
+    takenColors.push(seat.color);
   });
 }
 
@@ -321,7 +352,7 @@ function removeClient(room, clientId, announce = true) {
             seat.sessionId = null;
             seat.disconnected = false;
             seat.label = players.find((player) => player.id === seat.playerId).name;
-            seat.color = defaultColorForSeat(players.findIndex((player) => player.id === seat.playerId));
+            refreshAiSeatColors(room.game);
             addLog(room.game, "A disconnected player was replaced by AI.");
             broadcast(room);
             setTimeout(() => aiMove(room), AI_TURN_DELAY_MS);
@@ -332,7 +363,7 @@ function removeClient(room, clientId, announce = true) {
         seat.type = "ai";
         seat.disconnected = false;
         seat.label = players.find((player) => player.id === seat.playerId).name;
-        seat.color = defaultColorForSeat(players.findIndex((player) => player.id === seat.playerId));
+        refreshAiSeatColors(room.game);
       }
     }
   }
@@ -372,6 +403,7 @@ function handleMessage(room, clientId, message) {
     seat.disconnected = false;
     seat.label = (message.name || seat.label || "Player").trim().slice(0, 18);
     seat.color = requestedColor;
+    refreshAiSeatColors(game);
     if (!wasAlreadySeated) {
       addLog(game, `${seat.label} joined as ${players[seatIndex].name}.`);
     }
@@ -380,13 +412,20 @@ function handleMessage(room, clientId, message) {
   if (message.type === "setSeat") {
     const seat = game.seats[message.seat];
     if (seat && (seat.clientId === clientId || seat.type === "ai")) {
-      seat.type = message.seatType === "human" ? "human" : "ai";
-      seat.clientId = seat.type === "human" ? clientId : null;
-      seat.sessionId = seat.type === "human" ? String(message.sessionId || seat.sessionId || "").slice(0, 64) : null;
+      const wantsHuman = message.seatType === "human";
+      const nextColor = wantsHuman ? normalizeHexColor(message.color) || seat.color : defaultColorForSeat(message.seat);
+      if (wantsHuman && !colorIsAvailable(game, nextColor, message.seat)) {
+        send(room.clients.get(clientId), { type: "error", message: "That colour is too close to another player." });
+        return;
+      }
+      seat.type = wantsHuman ? "human" : "ai";
+      seat.clientId = wantsHuman ? clientId : null;
+      seat.sessionId = wantsHuman ? String(message.sessionId || seat.sessionId || "").slice(0, 64) : null;
       seat.disconnected = false;
-      seat.color = seat.type === "human" ? normalizeHexColor(message.color) || seat.color : defaultColorForSeat(message.seat);
-      seat.label = seat.type === "human" ? (message.name || seat.label).trim().slice(0, 18) : players[message.seat].name;
-      addLog(game, `${players[message.seat].name} is now ${seat.type === "human" ? "a human seat" : "AI controlled"}.`);
+      seat.color = nextColor;
+      seat.label = wantsHuman ? (message.name || seat.label).trim().slice(0, 18) : players[message.seat].name;
+      refreshAiSeatColors(game);
+      addLog(game, `${players[message.seat].name} is now ${wantsHuman ? "a human seat" : "AI controlled"}.`);
     }
   }
 
@@ -545,8 +584,10 @@ module.exports = {
   HOME_ENTRY,
   HOME_FINISH,
   availableMoves,
+  colorDistance,
   createGame,
   pathIndexFor,
   players,
+  refreshAiSeatColors,
   server
 };

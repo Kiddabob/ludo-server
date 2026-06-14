@@ -252,6 +252,7 @@ function send(payload) {
 function render() {
   if (!state) return;
   roomBadge.textContent = state.roomCode;
+  applyPlayerColourVariables();
   renderSeats();
   renderTokens();
   renderControls();
@@ -259,9 +260,19 @@ function render() {
   renderCelebration();
 }
 
+function applyPlayerColourVariables() {
+  state.players.forEach((player) => {
+    document.documentElement.style.setProperty(`--player-${player.id}`, colorFor(player.id));
+  });
+}
+
 function colorFor(playerId) {
   const seat = state?.seats?.find((item) => item.playerId === playerId);
   return seat?.color || colors[playerId] || "#0b57d0";
+}
+
+function playerColorVar(playerId) {
+  return `var(--player-${playerId}, ${colors[playerId] || "#0b57d0"})`;
 }
 
 function selectedSeatIndex() {
@@ -372,7 +383,7 @@ function renderSeats() {
     const tokensHome = state.tokens[player.id].filter((position) => position === HOME_FINISH).length;
     return `
       <article class="seat ${index === state.turn && state.phase === "playing" ? "active" : ""}">
-        <div class="seat-dot" style="background:${colorFor(player.id)}"></div>
+        <div class="seat-dot" style="background:${playerColorVar(player.id)}"></div>
         <div>
           <strong>${escapeHtml(seat.label)}</strong>
           <span>${mine ? `You (${seatStatus})` : seat.disconnected ? "Reconnecting" : seatStatus}</span>
@@ -431,7 +442,7 @@ function renderTokens() {
       token.dataset.tokenId = `${item.player.id}-${item.token}`;
       token.style.setProperty("--stack-index", index);
       token.className = `token ${item.movable ? "movable" : ""}`;
-      token.style.background = colorFor(item.player.id);
+      token.style.background = playerColorVar(item.player.id);
       token.textContent = item.token + 1;
       token.type = "button";
       token.disabled = !item.movable;
@@ -536,7 +547,7 @@ function showLandingPreview(move) {
   if (!cell) return;
   const preview = document.createElement("div");
   preview.className = "landing-preview";
-  preview.style.background = colorFor(move.playerId);
+  preview.style.background = playerColorVar(move.playerId);
   placeOverlayItem(preview, cell);
   tokenLayer.appendChild(preview);
 }

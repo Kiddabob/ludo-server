@@ -13,6 +13,11 @@
   --blue: #4285f4;
   --yellow: #fbbc04;
   --green: #34a853;
+  --player-red: var(--red);
+  --player-blue: var(--blue);
+  --player-yellow: var(--yellow);
+  --player-green: var(--green);
+  --board-border: color-mix(in srgb, var(--surface) 88%, white);
   --shadow: 0 16px 48px rgba(60, 64, 67, 0.16);
   --shadow-strong: 0 24px 80px rgba(60, 64, 67, 0.22);
   font-family: "Google Sans", Arial, sans-serif;
@@ -29,6 +34,7 @@
   --primary: #8ab4f8;
   --primary-ink: #061429;
   --tonal: #263b5f;
+  --board-border: #202b3a;
   --shadow: 0 16px 48px rgba(0, 0, 0, 0.36);
   --shadow-strong: 0 24px 80px rgba(0, 0, 0, 0.52);
 }
@@ -383,7 +389,7 @@ input:focus {
   width: min(76vh, 100%);
   margin: 0 auto;
   overflow: visible;
-  border: 10px solid color-mix(in srgb, var(--surface) 88%, white);
+  border: 10px solid var(--board-border);
   border-radius: 34px;
   background: #ffffff;
   box-shadow: var(--shadow);
@@ -391,7 +397,8 @@ input:focus {
 }
 
 :root[data-theme="dark"] .board {
-  border-color: #eef3f8;
+  border-color: var(--board-border);
+  background: #101722;
 }
 
 .board::before {
@@ -492,19 +499,19 @@ input:focus {
 }
 
 .cell.start-red {
-  --start-color: var(--red);
+  --start-color: var(--player-red, var(--red));
 }
 
 .cell.start-blue {
-  --start-color: var(--blue);
+  --start-color: var(--player-blue, var(--blue));
 }
 
 .cell.start-yellow {
-  --start-color: var(--yellow);
+  --start-color: var(--player-yellow, var(--yellow));
 }
 
 .cell.start-green {
-  --start-color: var(--green);
+  --start-color: var(--player-green, var(--green));
 }
 
 .cell.home-arrow {
@@ -526,19 +533,19 @@ input:focus {
 }
 
 .cell.home-arrow-red {
-  --arrow-color: var(--red);
+  --arrow-color: var(--player-red, var(--red));
 }
 
 .cell.home-arrow-blue {
-  --arrow-color: var(--blue);
+  --arrow-color: var(--player-blue, var(--blue));
 }
 
 .cell.home-arrow-yellow {
-  --arrow-color: var(--yellow);
+  --arrow-color: var(--player-yellow, var(--yellow));
 }
 
 .cell.home-arrow-green {
-  --arrow-color: var(--green);
+  --arrow-color: var(--player-green, var(--green));
 }
 
 .cell.arrow-right::after {
@@ -566,19 +573,19 @@ input:focus {
 }
 
 .cell.safe-red::before {
-  background: var(--red);
+  background: var(--player-red, var(--red));
 }
 
 .cell.safe-blue::before {
-  background: var(--blue);
+  background: var(--player-blue, var(--blue));
 }
 
 .cell.safe-yellow::before {
-  background: var(--yellow);
+  background: var(--player-yellow, var(--yellow));
 }
 
 .cell.safe-green::before {
-  background: var(--green);
+  background: var(--player-green, var(--green));
 }
 
 .cell.home,
@@ -588,22 +595,22 @@ input:focus {
 
 .home-red,
 .yard-red {
-  background: color-mix(in srgb, var(--red) 82%, white);
+  background: color-mix(in srgb, var(--player-red, var(--red)) 82%, white);
 }
 
 .home-blue,
 .yard-blue {
-  background: color-mix(in srgb, var(--blue) 82%, white);
+  background: color-mix(in srgb, var(--player-blue, var(--blue)) 82%, white);
 }
 
 .home-yellow,
 .yard-yellow {
-  background: color-mix(in srgb, var(--yellow) 82%, white);
+  background: color-mix(in srgb, var(--player-yellow, var(--yellow)) 82%, white);
 }
 
 .home-green,
 .yard-green {
-  background: color-mix(in srgb, var(--green) 82%, white);
+  background: color-mix(in srgb, var(--player-green, var(--green)) 82%, white);
 }
 
 :root[data-theme="dark"] .cell.path {
@@ -614,28 +621,28 @@ input:focus {
 .cell.yard.yard-red,
 :root[data-theme="dark"] .cell.home.home-red,
 :root[data-theme="dark"] .cell.yard.yard-red {
-  background: color-mix(in srgb, var(--red) 82%, var(--surface)) !important;
+  background: color-mix(in srgb, var(--player-red, var(--red)) 82%, var(--surface)) !important;
 }
 
 .cell.home.home-blue,
 .cell.yard.yard-blue,
 :root[data-theme="dark"] .cell.home.home-blue,
 :root[data-theme="dark"] .cell.yard.yard-blue {
-  background: color-mix(in srgb, var(--blue) 82%, var(--surface)) !important;
+  background: color-mix(in srgb, var(--player-blue, var(--blue)) 82%, var(--surface)) !important;
 }
 
 .cell.home.home-yellow,
 .cell.yard.yard-yellow,
 :root[data-theme="dark"] .cell.home.home-yellow,
 :root[data-theme="dark"] .cell.yard.yard-yellow {
-  background: color-mix(in srgb, var(--yellow) 82%, var(--surface)) !important;
+  background: color-mix(in srgb, var(--player-yellow, var(--yellow)) 82%, var(--surface)) !important;
 }
 
 .cell.home.home-green,
 .cell.yard.yard-green,
 :root[data-theme="dark"] .cell.home.home-green,
 :root[data-theme="dark"] .cell.yard.yard-green {
-  background: color-mix(in srgb, var(--green) 82%, var(--surface)) !important;
+  background: color-mix(in srgb, var(--player-green, var(--green)) 82%, var(--surface)) !important;
 }
 
 .center {
@@ -670,39 +677,39 @@ input:focus {
 }
 
 .finish-red {
-  background: var(--red);
+  background: var(--player-red, var(--red));
   clip-path: polygon(0 0, 50% 50%, 0 100%);
 }
 
 .finish-blue {
-  background: var(--blue);
+  background: var(--player-blue, var(--blue));
   clip-path: polygon(0 0, 100% 0, 50% 50%);
 }
 
 .finish-yellow {
-  background: var(--yellow);
+  background: var(--player-yellow, var(--yellow));
   clip-path: polygon(100% 0, 100% 100%, 50% 50%);
 }
 
 .finish-green {
-  background: var(--green);
+  background: var(--player-green, var(--green));
   clip-path: polygon(0 100%, 50% 50%, 100% 100%);
 }
 
 :root[data-theme="dark"] .finish-red {
-  background: color-mix(in srgb, var(--red) 86%, #121821);
+  background: color-mix(in srgb, var(--player-red, var(--red)) 86%, #121821);
 }
 
 :root[data-theme="dark"] .finish-blue {
-  background: color-mix(in srgb, var(--blue) 86%, #121821);
+  background: color-mix(in srgb, var(--player-blue, var(--blue)) 86%, #121821);
 }
 
 :root[data-theme="dark"] .finish-yellow {
-  background: color-mix(in srgb, var(--yellow) 86%, #121821);
+  background: color-mix(in srgb, var(--player-yellow, var(--yellow)) 86%, #121821);
 }
 
 :root[data-theme="dark"] .finish-green {
-  background: color-mix(in srgb, var(--green) 86%, #121821);
+  background: color-mix(in srgb, var(--player-green, var(--green)) 86%, #121821);
 }
 
 .token-layer {
