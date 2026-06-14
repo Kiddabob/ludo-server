@@ -21,6 +21,7 @@ const setupNameInput = document.querySelector("#setupName");
 const setupRoomCodeInput = document.querySelector("#setupRoomCode");
 const hostRoomButton = document.querySelector("#hostRoom");
 const leaveRoomButton = document.querySelector("#leaveRoom");
+const themeToggleButton = document.querySelector("#themeToggle");
 const playerNameDisplay = document.querySelector("#playerNameDisplay");
 const copyInviteButton = document.querySelector("#copyInvite");
 const roomBadge = document.querySelector("#roomBadge");
@@ -67,7 +68,19 @@ let connectionToken = 0;
 let shouldReconnect = false;
 let lastTurnSignature = "";
 let lastDice = null;
+let previousState = null;
 const sessionId = getSessionId();
+const safeSquareIndexes = [0, 8, 13, 21, 26, 34, 39, 47];
+const safeSquareColors = {
+  0: "red",
+  8: "red",
+  13: "blue",
+  21: "blue",
+  26: "yellow",
+  34: "yellow",
+  39: "green",
+  47: "green"
+};
 
 function key(row, col) {
   return `${row}-${col}`;
@@ -76,7 +89,7 @@ function key(row, col) {
 function createBoard() {
   board.innerHTML = "";
   const trackKeys = new Set(outerTrack.map(([row, col]) => key(row, col)));
-  const safeKeys = new Set([0, 8, 13, 21, 26, 34, 39, 47].map((index) => key(...outerTrack[index])));
+  const safeKeys = new Map(safeSquareIndexes.map((index) => [key(...outerTrack[index]), safeSquareColors[index]]));
   const laneKeys = new Map();
   for (const [player, cells] of Object.entries(homeLanes)) {
     cells.forEach(([row, col], index) => laneKeys.set(key(row, col), { player, index }));
@@ -99,7 +112,7 @@ function createBoard() {
         cell.classList.add("path", "home", `home-${lane.player}`);
       } else if (trackKeys.has(key(row, col))) {
         cell.classList.add("path");
-        if (safeKeys.has(key(row, col))) cell.classList.add("safe");
+        if (safeKeys.has(key(row, col))) cell.classList.add("safe", `safe-${safeKeys.get(key(row, col))}`);
       } else if (home) {
         cell.classList.add("yard", `yard-${home[0]}`);
       }
@@ -135,6 +148,7 @@ function connect(room) {
     const message = JSON.parse(event.data);
     if (message.clientId) clientId = message.clientId;
     if (message.state) {
+      previousState = state ? structuredClone(state) : null;
       state = message.state;
       render();
     }
@@ -223,8 +237,10 @@ function renderTokens() {
     previousRects.set(token.dataset.tokenId, token.getBoundingClientRect());
   });
   board.querySelectorAll(".token-stack").forEach((stack) => stack.remove());
+  clearLandingPreview();
   const stacks = new Map();
-  const movable = new Set(availableMoves().map((move) => `${move.playerId}-${move.token}`));
+  const moves = availableMoves();
+  const movable = new Map(moves.map((move) => [`${move.playerId}-${move.token}`, move]));
 
   for (const player of state.players) {
     state.tokens[player.id].forEach((position, token) => {
@@ -239,17 +255,23 @@ function renderTokens() {
     if (!cell) continue;
     const stack = document.createElement("div");
     stack.className = "token-stack";
-    for (const item of tokens) {
+    stack.style.setProperty("--stack-count", tokens.length);
+    tokens.forEach((item, index) => {
       const token = document.createElement("button");
       token.dataset.tokenId = `${item.player.id}-${item.token}`;
+      token.style.setProperty("--stack-index", index);
       token.className = `token ${item.movable ? "movable" : ""}`;
       token.style.background = colors[item.player.id];
       token.textContent = item.token + 1;
       token.type = "button";
       token.disabled = !item.movable;
+      token.addEventListener("pointerenter", () => showLandingPreview(movable.get(token.dataset.tokenId)));
+      token.addEventListener("pointerleave", clearLandingPreview);
+      token.addEventListener("focus", () => showLandingPreview(movable.get(token.dataset.tokenId)));
+      token.addEventListener("blur", clearLandingPreview);
       token.addEventListener("click", () => send({ type: "move", token: item.token }));
       stack.appendChild(token);
-    }
+    });
     cell.appendChild(stack);
   }
 
@@ -287,6 +309,8 @@ function renderControls() {
   startButton.disabled = state.phase === "playing";
   board.classList.toggle("my-turn", Boolean(isMyTurn && state.phase === "playing"));
   document.body.classList.toggle("is-my-turn", Boolean(isMyTurn && state.phase === "playing"));
+  document.body.style.setProperty("--turn-color", player?.color || "#0b57d0");
+  document.body.style.setProperty("--turn-color-soft", `${player?.color || "#0b57d0"}22`);
 }
 
 function renderLog() {
@@ -300,8 +324,8 @@ function availableMoves() {
   const playerId = seat.playerId;
 
   return state.tokens[playerId].map((position, token) => {
-    if (position === -1 && state.dice === 6) return { playerId, token };
-    if (position >= 0 && position + state.dice <= 57) return { playerId, token };
+    if (position === -1 && state.dice === 6) return { playerId, token, from: -1, to: 0 };
+    if (position >= 0 && position + state.dice <= 57) return { playerId, token, from: position, to: position + state.dice };
     return null;
   }).filter(Boolean);
 }
@@ -333,23 +357,61 @@ function renderDice(value) {
     : "Roll";
 }
 
+function showLandingPreview(move) {
+  clearLandingPreview();
+  if (!move) return;
+  const cellKey = cellForToken(move.playerId, move.to, move.token);
+  const cell = board.querySelector(`[data-key="${cellKey}"]`);
+  if (!cell) return;
+  const preview = document.createElement("div");
+  preview.className = "landing-preview";
+  preview.style.background = colors[move.playerId];
+  cell.appendChild(preview);
+}
+
+function clearLandingPreview() {
+  board.querySelectorAll(".landing-preview").forEach((preview) => preview.remove());
+}
+
 function animateMovedTokens(previousRects) {
   board.querySelectorAll(".token").forEach((token) => {
     const previous = previousRects.get(token.dataset.tokenId);
     if (!previous) return;
     const next = token.getBoundingClientRect();
-    const dx = previous.left - next.left;
-    const dy = previous.top - next.top;
-    if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return;
+    const path = movementPathFor(token.dataset.tokenId, next);
+    const keyframes = path.length ? path : [{ x: previous.left - next.left, y: previous.top - next.top }];
+    if (!keyframes.some((point) => Math.abs(point.x) > 2 || Math.abs(point.y) > 2)) return;
 
     token.animate([
-      { transform: `translate(${dx}px, ${dy}px) scale(1.08)`, zIndex: 3 },
+      ...keyframes.map((point) => ({ transform: `translate(${point.x}px, ${point.y}px) scale(1.08)`, zIndex: 3 })),
       { transform: "translate(0, 0) scale(1)", zIndex: 3 }
     ], {
-      duration: 620,
+      duration: Math.min(1100, 360 + keyframes.length * 90),
       easing: "cubic-bezier(0.2, 0, 0, 1)"
     });
   });
+}
+
+function movementPathFor(tokenId, finalRect) {
+  if (!previousState || !state) return [];
+  const [playerId, tokenIndexText] = tokenId.split("-");
+  const tokenIndex = Number(tokenIndexText);
+  const from = previousState.tokens[playerId]?.[tokenIndex];
+  const to = state.tokens[playerId]?.[tokenIndex];
+  if (from === undefined || to === undefined || from === to || from < 0 || to < 0 || to < from) return [];
+
+  const steps = [];
+  for (let position = from; position < to; position += 1) {
+    const cellKey = cellForToken(playerId, position, tokenIndex);
+    const cell = board.querySelector(`[data-key="${cellKey}"]`);
+    if (!cell) continue;
+    const rect = cell.getBoundingClientRect();
+    steps.push({
+      x: rect.left + rect.width / 2 - (finalRect.left + finalRect.width / 2),
+      y: rect.top + rect.height / 2 - (finalRect.top + finalRect.height / 2)
+    });
+  }
+  return steps;
 }
 
 function showToast(message) {
@@ -400,6 +462,12 @@ function getSessionId() {
   return next;
 }
 
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  themeToggleButton.textContent = theme === "dark" ? "☀" : "☾";
+  localStorage.setItem("ludoTheme", theme);
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
@@ -430,6 +498,10 @@ leaveRoomButton.addEventListener("click", () => {
   disconnect(true);
 });
 
+themeToggleButton.addEventListener("click", () => {
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+});
+
 copyInviteButton.addEventListener("click", async () => {
   const url = new URL(location.href);
   url.searchParams.set("room", currentRoom);
@@ -447,6 +519,7 @@ rollButton.addEventListener("click", () => send({ type: "roll" }));
 window.addEventListener("beforeunload", () => disconnect(false));
 
 createBoard();
+applyTheme(localStorage.getItem("ludoTheme") || "light");
 
 const roomFromUrl = new URLSearchParams(location.search).get("room");
 if (roomFromUrl) {
