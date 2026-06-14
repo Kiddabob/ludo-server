@@ -2,6 +2,7 @@
 setlocal
 
 set "REPO_DIR=G:\K Website\Ludo"
+set "DEFAULT_COMMIT_MSG=Add expressive sound, 3D dice, and activity polish"
 
 title Push Ludo Updates
 echo.
@@ -39,9 +40,12 @@ echo.
 git status --short
 echo.
 
+echo Default update description:
+echo %DEFAULT_COMMIT_MSG%
+echo.
 set "COMMIT_MSG="
-set /p "COMMIT_MSG=Commit message (press Enter for default): "
-if "%COMMIT_MSG%"=="" set "COMMIT_MSG=Update Ludo app"
+set /p "COMMIT_MSG=Update description (type your own, or press Enter to use the default): "
+if "%COMMIT_MSG%"=="" set "COMMIT_MSG=%DEFAULT_COMMIT_MSG%"
 
 echo.
 echo Staging files...

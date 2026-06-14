@@ -75,6 +75,8 @@
               <strong id="playerNameDisplay">Player</strong>
             </div>
             <button id="copyInvite" class="icon-button" type="button" title="Copy invite link" aria-label="Copy invite link"><span class="material-symbols-rounded" aria-hidden="true">ios_share</span></button>
+            <button id="soundToggle" class="icon-button" type="button" title="Toggle sound effects" aria-label="Toggle sound effects"><span id="soundIcon" class="material-symbols-rounded" aria-hidden="true">volume_up</span></button>
+            <button id="motionToggle" class="icon-button" type="button" title="Toggle moving background" aria-label="Toggle moving background"><span id="motionIcon" class="material-symbols-rounded" aria-hidden="true">animation</span></button>
             <button id="themeToggle" class="icon-button" type="button" title="Toggle dark theme" aria-label="Toggle dark theme"><span id="themeIcon" class="material-symbols-rounded" aria-hidden="true">dark_mode</span></button>
             <button id="leaveRoom" class="tonal" type="button">Leave</button>
           </div>
@@ -109,7 +111,7 @@
                 <p id="turnHint" class="turn-hint">Join a room to begin.</p>
               </div>
               <button id="rollDice" class="dice-button" type="button" aria-label="Roll dice">
-                <span id="diceValue" class="dice-face" data-value="0">Roll</span>
+                <span id="diceValue" class="dice-cube" data-value="0"><span class="dice-idle">Roll</span></span>
               </button>
             </div>
           </section>

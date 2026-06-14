@@ -10,6 +10,27 @@ const defaultPalette = [
   { id: "yellow", label: "Yellow", color: colors.yellow, seat: 2 },
   { id: "green", label: "Green", color: colors.green, seat: 3 }
 ];
+const namedColours = [
+  { name: "Red", color: "#ea4335" },
+  { name: "Rose", color: "#e91e63" },
+  { name: "Coral", color: "#ff7043" },
+  { name: "Orange", color: "#ff6d00" },
+  { name: "Amber", color: "#fbbc04" },
+  { name: "Gold", color: "#d9a300" },
+  { name: "Lime", color: "#c0ca33" },
+  { name: "Green", color: "#34a853" },
+  { name: "Emerald", color: "#00c853" },
+  { name: "Teal", color: "#00897b" },
+  { name: "Cyan", color: "#00acc1" },
+  { name: "Sky", color: "#42a5f5" },
+  { name: "Blue", color: "#4285f4" },
+  { name: "Indigo", color: "#5e35b1" },
+  { name: "Violet", color: "#a142f4" },
+  { name: "Purple", color: "#8e24aa" },
+  { name: "Magenta", color: "#d81b60" },
+  { name: "Brown", color: "#8d6e63" },
+  { name: "Slate", color: "#607d8b" }
+];
 const HOME_ENTRY = 51;
 const HOME_FINISH = 56;
 
@@ -32,6 +53,10 @@ const hostRoomButton = document.querySelector("#hostRoom");
 const joinRoomButton = document.querySelector("#joinRoom");
 const leaveRoomButton = document.querySelector("#leaveRoom");
 const themeToggleButton = document.querySelector("#themeToggle");
+const soundToggleButton = document.querySelector("#soundToggle");
+const soundIcon = document.querySelector("#soundIcon");
+const motionToggleButton = document.querySelector("#motionToggle");
+const motionIcon = document.querySelector("#motionIcon");
 const colourSwatches = document.querySelector("#colourSwatches");
 const colourStatus = document.querySelector("#colourStatus");
 const customColourPreview = document.querySelector("#customColourPreview");
@@ -90,6 +115,8 @@ let previousState = null;
 let selectedColourId = "red";
 let roomPreviewState = null;
 let roomPreviewTimer;
+let soundEnabled = localStorage.getItem("ludoSound") !== "off";
+let audioContext;
 const sessionId = getSessionId();
 const safeSquareIndexes = [1, 9, 14, 22, 27, 35, 40, 48];
 const startSquareIndexes = [1, 14, 27, 40];
@@ -258,6 +285,7 @@ function render() {
   renderControls();
   renderLog();
   renderCelebration();
+  processActivityEffects();
 }
 
 function applyPlayerColourVariables() {
@@ -269,6 +297,12 @@ function applyPlayerColourVariables() {
 function colorFor(playerId) {
   const seat = state?.seats?.find((item) => item.playerId === playerId);
   return seat?.color || colors[playerId] || "#0b57d0";
+}
+
+function colourNameFor(color) {
+  return namedColours
+    .map((item) => ({ ...item, distance: colourDistance(color.toLowerCase(), item.color.toLowerCase()) }))
+    .sort((left, right) => left.distance - right.distance)[0]?.name || "Custom";
 }
 
 function playerColorVar(playerId) {
@@ -469,11 +503,13 @@ function renderControls() {
     showToast(state.canRoll ? "Your turn to roll" : "Choose a highlighted token");
   }
   lastTurnSignature = turnSignature;
-  turnLabel.textContent = state.winner
-    ? `${seatLabel(state.winner)} wins`
-    : state.phase === "lobby"
-      ? "Lobby"
-      : `${seat.label} (${player.name})`;
+  if (state.winner) {
+    turnLabel.textContent = `${seatLabel(state.winner)} wins`;
+  } else if (state.phase === "lobby") {
+    turnLabel.textContent = "Lobby";
+  } else {
+    turnLabel.innerHTML = `${escapeHtml(seat.label)} <span class="turn-colour-name" style="color:${playerColorVar(player.id)}">(${escapeHtml(colourNameFor(colorFor(player.id)))})</span>`;
+  }
   turnHint.textContent = state.winner
     ? "Match complete. Reset the room to play again."
     : state.phase === "lobby"
@@ -496,7 +532,31 @@ function renderControls() {
 }
 
 function renderLog() {
-  logEl.innerHTML = state.log.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  logEl.innerHTML = state.log.map((item, index) => {
+    const detail = activityDetail(item);
+    return `
+      <li class="log-item log-${detail.type} ${index === 0 ? "latest" : ""}" style="--log-accent:${detail.color}">
+        <span class="log-mark">${activityBadge(detail)}</span>
+        <span>${escapeHtml(item)}</span>
+      </li>
+    `;
+  }).join("");
+}
+
+function activityDetail(message) {
+  const roll = /rolled a ([1-6])\./.exec(message);
+  if (roll) return { type: "roll", icon: "casino", value: Number(roll[1]), color: "#8ab4f8", sound: "roll" };
+  if (/captured/.test(message)) return { type: "capture", icon: "flare", color: "#ff6d00", sound: "capture" };
+  if (/wins the game/.test(message)) return { type: "win", icon: "trophy", color: "#fbbc04", sound: "win" };
+  if (/moved token/.test(message)) return { type: "move", icon: "near_me", color: "#34a853", sound: "move" };
+  if (/no legal move/.test(message)) return { type: "blocked", icon: "block", color: "#a8b3c2", sound: "soft" };
+  if (/joined|human seat|AI controlled|Room created|replaced/.test(message)) return { type: "room", icon: "groups", color: "#a142f4", sound: "soft" };
+  return { type: "note", icon: "info", color: "#8ab4f8", sound: "soft" };
+}
+
+function activityBadge(detail) {
+  if (detail.type === "roll") return `<span class="log-die" data-value="${detail.value}">${detail.value}</span>`;
+  return `<span class="material-symbols-rounded" aria-hidden="true">${detail.icon}</span>`;
 }
 
 function availableMoves() {
@@ -530,13 +590,125 @@ function seatLabel(playerId) {
 function renderDice(value) {
   if (lastDice !== value && value) {
     rollButton.classList.add("rolled");
-    setTimeout(() => rollButton.classList.remove("rolled"), 650);
+    setTimeout(() => rollButton.classList.remove("rolled"), 920);
   }
   lastDice = value;
   diceValue.dataset.value = value || 0;
   diceValue.innerHTML = value
-    ? Array.from({ length: 9 }, () => '<span class="pip"></span>').join("")
+    ? diceCubeMarkup()
     : "Roll";
+}
+
+function diceCubeMarkup() {
+  return [1, 2, 3, 4, 5, 6]
+    .map((value) => `<span class="die-face die-face-${value}" data-face="${value}">${Array.from({ length: 9 }, () => '<span class="die-pip"></span>').join("")}</span>`)
+    .join("");
+}
+
+function processActivityEffects() {
+  if (!previousState || !state) return;
+
+  const newest = state.log?.[0];
+  if (newest && newest !== previousState.log?.[0]) {
+    playSound(activityDetail(newest).sound);
+  }
+
+  const seat = state.seats[state.turn];
+  const wasSeat = previousState.seats?.[previousState.turn];
+  const isMyTurn = state.phase === "playing" && seat?.type === "human" && seat.clientId === clientId;
+  const wasMyTurn = previousState.phase === "playing" && wasSeat?.type === "human" && wasSeat.clientId === clientId;
+  if (isMyTurn && !wasMyTurn) playSound("turn");
+}
+
+function setSoundEnabled(enabled, announce = false) {
+  soundEnabled = enabled;
+  localStorage.setItem("ludoSound", enabled ? "on" : "off");
+  soundIcon.textContent = enabled ? "volume_up" : "volume_off";
+  soundToggleButton.title = enabled ? "Sound effects on" : "Sound effects off";
+  soundToggleButton.setAttribute("aria-label", soundToggleButton.title);
+  if (enabled && announce) {
+    ensureAudio();
+    playSound("soft");
+  }
+}
+
+function ensureAudio() {
+  if (!soundEnabled) return null;
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return null;
+  audioContext ||= new AudioContext();
+  if (audioContext.state === "suspended") audioContext.resume();
+  return audioContext;
+}
+
+function playSound(type) {
+  const context = ensureAudio();
+  if (!context) return;
+  const now = context.currentTime;
+
+  if (type === "roll") {
+    playNoise(context, now, 0.28, 0.055);
+    playTone(context, 160, 0.08, now, "triangle", 0.035);
+    playTone(context, 280, 0.09, now + 0.08, "triangle", 0.035);
+    playTone(context, 420, 0.12, now + 0.18, "sine", 0.035);
+    return;
+  }
+
+  if (type === "move") {
+    [360, 440, 520].forEach((frequency, index) => playTone(context, frequency, 0.07, now + index * 0.055, "sine", 0.03));
+    return;
+  }
+
+  if (type === "capture") {
+    playTone(context, 180, 0.12, now, "sawtooth", 0.035);
+    playTone(context, 560, 0.16, now + 0.06, "triangle", 0.04);
+    return;
+  }
+
+  if (type === "win") {
+    [392, 523, 659, 784].forEach((frequency, index) => playTone(context, frequency, 0.14, now + index * 0.09, "sine", 0.04));
+    return;
+  }
+
+  if (type === "turn") {
+    playTone(context, 620, 0.12, now, "sine", 0.028);
+    playTone(context, 820, 0.12, now + 0.09, "sine", 0.028);
+    return;
+  }
+
+  playTone(context, 520, 0.08, now, "sine", 0.018);
+}
+
+function playTone(context, frequency, duration, start, type = "sine", volume = 0.03) {
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, start);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(volume, start + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start(start);
+  oscillator.stop(start + duration + 0.03);
+}
+
+function playNoise(context, start, duration, volume) {
+  const buffer = context.createBuffer(1, context.sampleRate * duration, context.sampleRate);
+  const output = buffer.getChannelData(0);
+  for (let index = 0; index < output.length; index += 1) output[index] = (Math.random() * 2 - 1) * (1 - index / output.length);
+  const source = context.createBufferSource();
+  const filter = context.createBiquadFilter();
+  const gain = context.createGain();
+  source.buffer = buffer;
+  filter.type = "bandpass";
+  filter.frequency.setValueAtTime(900, start);
+  gain.gain.setValueAtTime(volume, start);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(context.destination);
+  source.start(start);
 }
 
 function showLandingPreview(move) {
@@ -658,6 +830,14 @@ function applyTheme(theme) {
   localStorage.setItem("ludoTheme", theme);
 }
 
+function applyMotion(enabled) {
+  document.body.classList.toggle("motion-bg", enabled);
+  motionIcon.textContent = enabled ? "pause_circle" : "animation";
+  motionToggleButton.title = enabled ? "Moving background on" : "Moving background off";
+  motionToggleButton.setAttribute("aria-label", motionToggleButton.title);
+  localStorage.setItem("ludoMotion", enabled ? "on" : "off");
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
@@ -698,6 +878,14 @@ themeToggleButton.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 });
 
+soundToggleButton.addEventListener("click", () => {
+  setSoundEnabled(!soundEnabled, true);
+});
+
+motionToggleButton.addEventListener("click", () => {
+  applyMotion(!document.body.classList.contains("motion-bg"));
+});
+
 setupRoomCodeInput.addEventListener("input", () => {
   clearTimeout(roomPreviewTimer);
   roomPreviewTimer = setTimeout(loadRoomPreview, 280);
@@ -723,13 +911,23 @@ copyInviteButton.addEventListener("click", async () => {
   }
 });
 
-startButton.addEventListener("click", () => send({ type: "start" }));
+startButton.addEventListener("click", () => {
+  ensureAudio();
+  send({ type: "start" });
+});
 resetButton.addEventListener("click", () => send({ type: "reset" }));
-rollButton.addEventListener("click", () => send({ type: "roll" }));
+rollButton.addEventListener("click", () => {
+  ensureAudio();
+  send({ type: "roll" });
+});
 window.addEventListener("beforeunload", () => disconnect(false));
+document.addEventListener("pointerdown", ensureAudio, { once: true });
+document.addEventListener("keydown", ensureAudio, { once: true });
 
 createBoard();
 applyTheme(localStorage.getItem("ludoTheme") || "light");
+applyMotion(localStorage.getItem("ludoMotion") === "on");
+setSoundEnabled(soundEnabled);
 renderColourPicker();
 
 const roomFromUrl = new URLSearchParams(location.search).get("room");
