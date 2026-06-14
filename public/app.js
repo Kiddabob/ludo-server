@@ -10,6 +10,8 @@ const defaultPalette = [
   { id: "yellow", label: "Yellow", color: colors.yellow, seat: 2 },
   { id: "green", label: "Green", color: colors.green, seat: 3 }
 ];
+const HOME_ENTRY = 51;
+const HOME_FINISH = 56;
 
 const board = document.querySelector("#board");
 let tokenLayer;
@@ -89,16 +91,29 @@ let selectedColourId = "red";
 let roomPreviewState = null;
 let roomPreviewTimer;
 const sessionId = getSessionId();
-const safeSquareIndexes = [0, 8, 13, 21, 26, 34, 39, 47];
+const safeSquareIndexes = [1, 9, 14, 22, 27, 35, 40, 48];
+const startSquareIndexes = [1, 14, 27, 40];
 const safeSquareColors = {
-  0: "red",
-  8: "red",
-  13: "blue",
-  21: "blue",
-  26: "yellow",
-  34: "yellow",
-  39: "green",
-  47: "green"
+  1: "red",
+  9: "red",
+  14: "blue",
+  22: "blue",
+  27: "yellow",
+  35: "yellow",
+  40: "green",
+  48: "green"
+};
+const startSquareDirections = {
+  1: "right",
+  14: "down",
+  27: "left",
+  40: "up"
+};
+const homeArrowCells = {
+  "7-0": { color: "red", direction: "right" },
+  "0-7": { color: "blue", direction: "down" },
+  "7-14": { color: "yellow", direction: "left" },
+  "14-7": { color: "green", direction: "up" }
 };
 
 function key(row, col) {
@@ -109,6 +124,8 @@ function createBoard() {
   board.innerHTML = "";
   const trackKeys = new Set(outerTrack.map(([row, col]) => key(row, col)));
   const safeKeys = new Map(safeSquareIndexes.map((index) => [key(...outerTrack[index]), safeSquareColors[index]]));
+  const startKeys = new Map(startSquareIndexes.map((index) => [key(...outerTrack[index]), { color: safeSquareColors[index], direction: startSquareDirections[index] }]));
+  const homeArrows = new Map(Object.entries(homeArrowCells));
   const laneKeys = new Map();
   for (const [player, cells] of Object.entries(homeLanes)) {
     cells.forEach(([row, col], index) => laneKeys.set(key(row, col), { player, index }));
@@ -124,19 +141,20 @@ function createBoard() {
 
       const home = Object.entries(homes).find(([, area]) => area.rows.includes(row) && area.cols.includes(col));
       const lane = laneKeys.get(key(row, col));
+      const homeArrow = homeArrows.get(key(row, col));
 
       if (row >= 6 && row <= 8 && col >= 6 && col <= 8) {
         cell.classList.add("center");
-        if (row === 7 && col === 7) cell.classList.add("center-core");
-        else if (col < 7) cell.classList.add("center-red");
-        else if (row < 7) cell.classList.add("center-blue");
-        else if (col > 7) cell.classList.add("center-yellow");
-        else if (row > 7) cell.classList.add("center-green");
       } else if (lane) {
         cell.classList.add("path", "home", `home-${lane.player}`);
       } else if (trackKeys.has(key(row, col))) {
         cell.classList.add("path");
         if (safeKeys.has(key(row, col))) cell.classList.add("safe", `safe-${safeKeys.get(key(row, col))}`);
+        if (startKeys.has(key(row, col))) {
+          const start = startKeys.get(key(row, col));
+          cell.classList.add("safe-start", `start-${start.color}`, `arrow-${start.direction}`);
+        }
+        if (homeArrow) cell.classList.add("home-arrow", `home-arrow-${homeArrow.color}`, `arrow-${homeArrow.direction}`);
       } else if (home) {
         cell.classList.add("yard", `yard-${home[0]}`);
       }
@@ -144,6 +162,16 @@ function createBoard() {
       board.appendChild(cell);
     }
   }
+  const finishDiamond = document.createElement("div");
+  finishDiamond.className = "finish-diamond";
+  finishDiamond.style.gridRow = "7 / 10";
+  finishDiamond.style.gridColumn = "7 / 10";
+  ["red", "blue", "yellow", "green"].forEach((playerId) => {
+    const slice = document.createElement("span");
+    slice.className = `finish-slice finish-${playerId}`;
+    finishDiamond.appendChild(slice);
+  });
+  board.appendChild(finishDiamond);
   tokenLayer = document.createElement("div");
   tokenLayer.id = "tokenLayer";
   tokenLayer.className = "token-layer";
@@ -341,7 +369,7 @@ function renderSeats() {
     const mine = seat.clientId === clientId;
     const isHost = seat.sessionId && seat.sessionId === state.hostSessionId;
     const seatStatus = seat.type === "ai" ? "AI" : isHost ? "Host" : "Player";
-    const tokensHome = state.tokens[player.id].filter((position) => position === 57).length;
+    const tokensHome = state.tokens[player.id].filter((position) => position === HOME_FINISH).length;
     return `
       <article class="seat ${index === state.turn && state.phase === "playing" ? "active" : ""}">
         <div class="seat-dot" style="background:${colorFor(player.id)}"></div>
@@ -451,8 +479,9 @@ function renderControls() {
   startButton.disabled = state.phase === "playing";
   board.classList.toggle("my-turn", Boolean(isMyTurn && state.phase === "playing"));
   document.body.classList.toggle("is-my-turn", Boolean(isMyTurn && state.phase === "playing"));
-  document.body.style.setProperty("--turn-color", player?.color || "#0b57d0");
-  document.body.style.setProperty("--turn-color-soft", `${player?.color || "#0b57d0"}22`);
+  const turnColor = state.phase === "playing" && player ? player.color : "#0b57d0";
+  document.body.style.setProperty("--turn-color", turnColor);
+  document.body.style.setProperty("--turn-color-soft", `${turnColor}22`);
 }
 
 function renderLog() {
@@ -467,18 +496,18 @@ function availableMoves() {
 
   return state.tokens[playerId].map((position, token) => {
     if (position === -1 && state.dice === 6) return { playerId, token, from: -1, to: 0 };
-    if (position >= 0 && position + state.dice <= 57) return { playerId, token, from: position, to: position + state.dice };
+    if (position >= 0 && position + state.dice <= HOME_FINISH) return { playerId, token, from: position, to: position + state.dice };
     return null;
   }).filter(Boolean);
 }
 
 function cellForToken(playerId, position, token) {
   if (position === -1) return key(...yards[playerId][token]);
-  if (position < 52) {
+  if (position < HOME_ENTRY) {
     const player = state.players.find((item) => item.id === playerId);
     return key(...outerTrack[(player.start + position) % 52]);
   }
-  if (position <= 57) return key(...homeLanes[playerId][position - 52]);
+  if (position <= HOME_FINISH) return key(...homeLanes[playerId][position - HOME_ENTRY]);
   return "7-7";
 }
 

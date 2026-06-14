@@ -454,6 +454,117 @@ input:focus {
   content: "";
 }
 
+.cell.safe-start {
+  --arrow-ink: #ffffff;
+  --arrow-body: clamp(10px, 1.3vw, 16px);
+  --arrow-wing: clamp(6px, 0.75vw, 9px);
+  background: color-mix(in srgb, var(--start-color, var(--red)) 82%, var(--surface)) !important;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--start-color, var(--red)) 54%, white);
+}
+
+.cell.safe-start::before {
+  position: absolute;
+  right: 9%;
+  bottom: 9%;
+  width: 30%;
+  height: 30%;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: 0 3px 8px rgba(32, 33, 36, 0.18);
+  clip-path: polygon(50% 0%, 61% 34%, 98% 35%, 68% 55%, 79% 91%, 50% 69%, 21% 91%, 32% 55%, 2% 35%, 39% 34%);
+  content: "";
+}
+
+.cell.safe-start::after,
+.cell.home-arrow::after {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border: 0;
+  background: transparent;
+  clip-path: none;
+  content: "";
+  transform: translate(-50%, -50%);
+  z-index: 2;
+}
+
+.cell.start-red {
+  --start-color: var(--red);
+}
+
+.cell.start-blue {
+  --start-color: var(--blue);
+}
+
+.cell.start-yellow {
+  --start-color: var(--yellow);
+}
+
+.cell.start-green {
+  --start-color: var(--green);
+}
+
+.cell.home-arrow {
+  --arrow-body: clamp(10px, 1.35vw, 17px);
+  --arrow-wing: clamp(6px, 0.8vw, 10px);
+  --arrow-color: var(--red);
+  --arrow-ink: var(--arrow-color);
+  background: color-mix(in srgb, var(--arrow-color) 14%, var(--surface)) !important;
+}
+
+.cell.home-arrow::before {
+  position: absolute;
+  inset: 18%;
+  border: 0;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--arrow-color) 14%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--arrow-color) 42%, transparent);
+  content: "";
+}
+
+.cell.home-arrow-red {
+  --arrow-color: var(--red);
+}
+
+.cell.home-arrow-blue {
+  --arrow-color: var(--blue);
+}
+
+.cell.home-arrow-yellow {
+  --arrow-color: var(--yellow);
+}
+
+.cell.home-arrow-green {
+  --arrow-color: var(--green);
+}
+
+.cell.arrow-right::after {
+  border-top: var(--arrow-wing, 8px) solid transparent;
+  border-bottom: var(--arrow-wing, 8px) solid transparent;
+  border-left: var(--arrow-body, 15px) solid var(--arrow-ink, #ffffff);
+}
+
+.cell.arrow-left::after {
+  border-top: var(--arrow-wing, 8px) solid transparent;
+  border-bottom: var(--arrow-wing, 8px) solid transparent;
+  border-right: var(--arrow-body, 15px) solid var(--arrow-ink, #ffffff);
+}
+
+.cell.arrow-up::after {
+  border-left: var(--arrow-wing, 8px) solid transparent;
+  border-right: var(--arrow-wing, 8px) solid transparent;
+  border-bottom: var(--arrow-body, 15px) solid var(--arrow-ink, #ffffff);
+}
+
+.cell.arrow-down::after {
+  border-left: var(--arrow-wing, 8px) solid transparent;
+  border-right: var(--arrow-wing, 8px) solid transparent;
+  border-top: var(--arrow-body, 15px) solid var(--arrow-ink, #ffffff);
+}
+
 .cell.safe-red::before {
   background: var(--red);
 }
@@ -529,46 +640,69 @@ input:focus {
 
 .center {
   border: 0;
+  background: transparent !important;
 }
 
-.center-red {
+.finish-diamond {
+  position: relative;
+  z-index: 4;
+  align-self: stretch;
+  justify-self: stretch;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: transparent;
+  pointer-events: none;
+}
+
+.finish-diamond::after {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(45deg, transparent calc(50% - 0.75px), rgba(255, 255, 255, 0.36) 50%, transparent calc(50% + 0.75px)),
+    linear-gradient(-45deg, transparent calc(50% - 0.75px), rgba(255, 255, 255, 0.36) 50%, transparent calc(50% + 0.75px));
+  content: "";
+}
+
+.finish-slice {
+  position: absolute;
+  inset: 0;
+}
+
+.finish-red {
   background: var(--red);
+  clip-path: polygon(0 0, 50% 50%, 0 100%);
 }
 
-.center-blue {
+.finish-blue {
   background: var(--blue);
+  clip-path: polygon(0 0, 100% 0, 50% 50%);
 }
 
-.center-yellow {
+.finish-yellow {
   background: var(--yellow);
+  clip-path: polygon(100% 0, 100% 100%, 50% 50%);
 }
 
-.center-green {
+.finish-green {
   background: var(--green);
+  clip-path: polygon(0 100%, 50% 50%, 100% 100%);
 }
 
-.center-core {
-  background: conic-gradient(from 45deg, var(--blue) 0 25%, var(--yellow) 0 50%, var(--green) 0 75%, var(--red) 0);
+:root[data-theme="dark"] .finish-red {
+  background: color-mix(in srgb, var(--red) 86%, #121821);
 }
 
-:root[data-theme="dark"] .center-red {
-  background: color-mix(in srgb, var(--red) 82%, #121821);
+:root[data-theme="dark"] .finish-blue {
+  background: color-mix(in srgb, var(--blue) 86%, #121821);
 }
 
-:root[data-theme="dark"] .center-blue {
-  background: color-mix(in srgb, var(--blue) 82%, #121821);
+:root[data-theme="dark"] .finish-yellow {
+  background: color-mix(in srgb, var(--yellow) 86%, #121821);
 }
 
-:root[data-theme="dark"] .center-yellow {
-  background: color-mix(in srgb, var(--yellow) 82%, #121821);
-}
-
-:root[data-theme="dark"] .center-green {
-  background: color-mix(in srgb, var(--green) 82%, #121821);
-}
-
-:root[data-theme="dark"] .center-core {
-  background: conic-gradient(from 45deg, color-mix(in srgb, var(--blue) 82%, #121821) 0 25%, color-mix(in srgb, var(--yellow) 82%, #121821) 0 50%, color-mix(in srgb, var(--green) 82%, #121821) 0 75%, color-mix(in srgb, var(--red) 82%, #121821) 0);
+:root[data-theme="dark"] .finish-green {
+  background: color-mix(in srgb, var(--green) 86%, #121821);
 }
 
 .token-layer {
@@ -657,13 +791,29 @@ input:focus {
 
 .turn-card {
   padding: 16px 18px;
+  border-color: color-mix(in srgb, var(--turn-color, #0b57d0) 28%, rgba(217, 222, 232, 0.9));
+  background: color-mix(in srgb, var(--turn-color, #0b57d0) 10%, rgba(255, 255, 255, 0.86));
   transition: background 220ms ease, box-shadow 220ms ease, transform 220ms ease;
 }
 
+:root[data-theme="dark"] .turn-card {
+  border-color: color-mix(in srgb, var(--turn-color, #8ab4f8) 38%, #334155);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--turn-color, #8ab4f8) 24%, #151a20), #151a20);
+}
+
 .is-my-turn .turn-card {
-  background: color-mix(in srgb, var(--turn-color, #0b57d0) 18%, var(--surface));
+  background: color-mix(in srgb, var(--turn-color, #0b57d0) 18%, rgba(255, 255, 255, 0.9));
   box-shadow: var(--shadow-strong), 0 0 0 4px color-mix(in srgb, var(--turn-color, #0b57d0) 28%, transparent);
   transform: translateY(-2px);
+}
+
+:root[data-theme="dark"] .is-my-turn .turn-card {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--turn-color, #8ab4f8) 42%, #151a20), #151a20);
+  border-color: color-mix(in srgb, var(--turn-color, #8ab4f8) 56%, #334155);
+}
+
+:root[data-theme="dark"] .is-my-turn .turn-hint {
+  color: #f8fafc;
 }
 
 .dice-button {

@@ -26,7 +26,9 @@ const players = [
   { id: "green", name: "Jade", color: "#34a853", start: 40, entry: 37, home: [70, 71, 72, 73, 74, 75] }
 ];
 
-const safeSquares = new Set([0, 8, 13, 21, 26, 34, 39, 47]);
+const HOME_ENTRY = 51;
+const HOME_FINISH = 56;
+const safeSquares = new Set([1, 9, 14, 22, 27, 35, 40, 48]);
 const COLOR_DISTANCE_MINIMUM = 95;
 
 function createGame(roomCode) {
@@ -137,18 +139,18 @@ function isHumanTurn(game, clientId) {
 }
 
 function pathIndexFor(player, value) {
-  if (value < 0 || value > 57) return null;
-  if (value < 52) return (player.start + value) % 52;
-  return player.home[value - 52];
+  if (value < 0 || value > HOME_FINISH) return null;
+  if (value < HOME_ENTRY) return (player.start + value) % 52;
+  return player.home[value - HOME_ENTRY];
 }
 
 function availableMoves(game, playerId, dice) {
   const player = players.find((item) => item.id === playerId);
   return game.tokens[playerId]
     .map((position, token) => {
-      if (position === 57) return null;
+      if (position === HOME_FINISH) return null;
       if (position === -1 && dice === 6) return { token, from: -1, to: 0, boardIndex: player.start };
-      if (position >= 0 && position + dice <= 57) {
+      if (position >= 0 && position + dice <= HOME_FINISH) {
         return { token, from: position, to: position + dice, boardIndex: pathIndexFor(player, position + dice) };
       }
       return null;
@@ -207,10 +209,10 @@ function moveToken(game, clientId, token) {
 
   game.tokens[seat.playerId][token] = move.to;
   const captures = captureTokens(game, seat.playerId, move.boardIndex);
-  const finished = move.to === 57;
+  const finished = move.to === HOME_FINISH;
   addLog(game, `${seat.label} moved token ${token + 1}${captures ? ` and captured ${captures}` : ""}.`);
 
-  if (game.tokens[seat.playerId].every((position) => position === 57)) {
+  if (game.tokens[seat.playerId].every((position) => position === HOME_FINISH)) {
     game.winner = seat.playerId;
     game.phase = "finished";
     addLog(game, `${seat.label} wins the game.`);
@@ -245,7 +247,7 @@ function aiMove(room) {
 
 function scoreAiMove(game, playerId, move) {
   let score = move.to;
-  if (move.to === 57) score += 100;
+  if (move.to === HOME_FINISH) score += 100;
   if (move.from === -1) score += 18;
   if (move.boardIndex !== null && safeSquares.has(move.boardIndex)) score += 8;
 
@@ -533,6 +535,18 @@ server.on("upgrade", (request, socket) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Ludo Online Multiplayer running at http://localhost:${PORT}`);
-});
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`Ludo Online Multiplayer running at http://localhost:${PORT}`);
+  });
+}
+
+module.exports = {
+  HOME_ENTRY,
+  HOME_FINISH,
+  availableMoves,
+  createGame,
+  pathIndexFor,
+  players,
+  server
+};
