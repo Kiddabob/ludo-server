@@ -220,12 +220,24 @@ function handleMessage(room, clientId, message) {
   const game = room.game;
   if (message.type === "join") {
     const requested = Number(message.seat);
-    const seatIndex = Number.isInteger(requested) ? requested : game.seats.findIndex((seat) => seat.type !== "human");
+    const existingSeatIndex = game.seats.findIndex((seat) => seat.clientId === clientId);
+    const seatIndex = existingSeatIndex >= 0
+      ? existingSeatIndex
+      : Number.isInteger(requested)
+        ? requested
+        : game.seats.findIndex((seat) => seat.type !== "human");
+    if (seatIndex < 0 || seatIndex >= game.seats.length) {
+      send(room.clients.get(clientId), { type: "error", message: "That room is full." });
+      return;
+    }
     const seat = game.seats[seatIndex] || game.seats[0];
+    const wasAlreadySeated = existingSeatIndex >= 0;
     seat.type = "human";
     seat.clientId = clientId;
     seat.label = (message.name || seat.label || "Player").trim().slice(0, 18);
-    addLog(game, `${seat.label} joined as ${players[seatIndex].name}.`);
+    if (!wasAlreadySeated) {
+      addLog(game, `${seat.label} joined as ${players[seatIndex].name}.`);
+    }
   }
 
   if (message.type === "setSeat") {

@@ -14,9 +14,14 @@ const rollButton = document.querySelector("#rollDice");
 const startButton = document.querySelector("#startGame");
 const resetButton = document.querySelector("#resetGame");
 const statusChip = document.querySelector("#connectionStatus");
-const roomForm = document.querySelector("#roomForm");
-const roomCodeInput = document.querySelector("#roomCode");
-const playerNameInput = document.querySelector("#playerName");
+const setupScreen = document.querySelector("#setupScreen");
+const gameShell = document.querySelector("#gameShell");
+const setupForm = document.querySelector("#setupForm");
+const setupNameInput = document.querySelector("#setupName");
+const setupRoomCodeInput = document.querySelector("#setupRoomCode");
+const hostRoomButton = document.querySelector("#hostRoom");
+const leaveRoomButton = document.querySelector("#leaveRoom");
+const playerNameDisplay = document.querySelector("#playerNameDisplay");
 const copyInviteButton = document.querySelector("#copyInvite");
 const roomBadge = document.querySelector("#roomBadge");
 const turnHint = document.querySelector("#turnHint");
@@ -54,8 +59,12 @@ const homes = {
 let socket;
 let clientId;
 let state;
-let currentRoom = "PLAY";
+let currentRoom = "";
+let playerName = "Player";
 let celebratedWinner = null;
+let reconnectTimer;
+let connectionToken = 0;
+let shouldReconnect = false;
 
 function key(row, col) {
   return `${row}-${col}`;
@@ -96,17 +105,28 @@ function createBoard() {
 }
 
 function connect(room) {
-  if (socket) socket.close();
-  currentRoom = room;
+  disconnect(false);
+
+  currentRoom = cleanRoomCode(room) || randomRoomCode();
+  playerName = cleanPlayerName(setupNameInput.value);
+  playerNameDisplay.textContent = playerName;
+  setupRoomCodeInput.value = currentRoom;
+  setupScreen.classList.add("hidden");
+  gameShell.classList.remove("hidden");
   statusChip.textContent = "Connecting";
-  socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}?room=${encodeURIComponent(room)}`);
+  shouldReconnect = true;
+
+  const token = connectionToken;
+  socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}?room=${encodeURIComponent(currentRoom)}`);
 
   socket.addEventListener("open", () => {
+    if (token !== connectionToken) return;
     statusChip.textContent = "Online";
-    send({ type: "join", name: playerNameInput.value });
+    send({ type: "join", name: playerName });
   });
 
   socket.addEventListener("message", (event) => {
+    if (token !== connectionToken) return;
     const message = JSON.parse(event.data);
     if (message.clientId) clientId = message.clientId;
     if (message.state) {
@@ -116,9 +136,32 @@ function connect(room) {
   });
 
   socket.addEventListener("close", () => {
+    if (token !== connectionToken || !shouldReconnect) return;
     statusChip.textContent = "Reconnecting";
-    setTimeout(() => connect(currentRoom), 1200);
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(() => connect(currentRoom), 1400);
   });
+}
+
+function disconnect(returnToSetup = true) {
+  shouldReconnect = false;
+  clearTimeout(reconnectTimer);
+  connectionToken += 1;
+
+  if (socket) {
+    const closingSocket = socket;
+    socket = null;
+    closingSocket.close();
+  }
+
+  if (returnToSetup) {
+    setupScreen.classList.remove("hidden");
+    gameShell.classList.add("hidden");
+    statusChip.textContent = "Offline";
+    state = null;
+    clientId = null;
+    celebratedWinner = null;
+  }
 }
 
 function send(payload) {
@@ -162,7 +205,7 @@ function renderSeats() {
         type: "setSeat",
         seat: index,
         seatType: seat.type === "ai" ? "human" : "ai",
-        name: playerNameInput.value
+        name: playerName
       });
     });
   });
@@ -293,6 +336,18 @@ function renderCelebration() {
   }, 2600);
 }
 
+function cleanRoomCode(value) {
+  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+}
+
+function cleanPlayerName(value) {
+  return String(value || "Player").trim().slice(0, 18) || "Player";
+}
+
+function randomRoomCode() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
@@ -303,11 +358,24 @@ function escapeHtml(value) {
   })[char]);
 }
 
-roomForm.addEventListener("submit", (event) => {
+setupForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const room = roomCodeInput.value.trim().toUpperCase() || "PLAY";
-  roomCodeInput.value = room;
+  const room = cleanRoomCode(setupRoomCodeInput.value);
+  if (!room) {
+    showToast("Enter a join code first");
+    setupRoomCodeInput.focus();
+    return;
+  }
   connect(room);
+});
+
+hostRoomButton.addEventListener("click", () => {
+  setupRoomCodeInput.value = randomRoomCode();
+  connect(setupRoomCodeInput.value);
+});
+
+leaveRoomButton.addEventListener("click", () => {
+  disconnect(true);
 });
 
 copyInviteButton.addEventListener("click", async () => {
@@ -324,11 +392,11 @@ copyInviteButton.addEventListener("click", async () => {
 startButton.addEventListener("click", () => send({ type: "start" }));
 resetButton.addEventListener("click", () => send({ type: "reset" }));
 rollButton.addEventListener("click", () => send({ type: "roll" }));
+window.addEventListener("beforeunload", () => disconnect(false));
 
 createBoard();
+
 const roomFromUrl = new URLSearchParams(location.search).get("room");
 if (roomFromUrl) {
-  currentRoom = roomFromUrl.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) || "PLAY";
-  roomCodeInput.value = currentRoom;
+  setupRoomCodeInput.value = cleanRoomCode(roomFromUrl);
 }
-connect(currentRoom);

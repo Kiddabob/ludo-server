@@ -11,73 +11,94 @@
   </head>
   <body>
     <main class="app-shell">
-      <section class="top-bar">
-        <div>
-          <p class="eyebrow">Live room</p>
+      <section id="setupScreen" class="setup-screen">
+        <div class="setup-copy">
+          <p class="eyebrow">Online Ludo</p>
           <h1>Ludo</h1>
-          <p class="subtitle">Online rooms with AI players ready to fill every empty seat.</p>
+          <p class="subtitle">Choose a username, host a room, or join a friend with a room code. AI fills empty seats when the match starts.</p>
         </div>
-        <form id="roomForm" class="room-form">
+        <form id="setupForm" class="setup-card">
           <label>
-            Room
-            <input id="roomCode" maxlength="8" value="PLAY" autocomplete="off">
+            Username
+            <input id="setupName" maxlength="18" value="Player" autocomplete="nickname">
           </label>
           <label>
-            Name
-            <input id="playerName" maxlength="18" value="Player" autocomplete="nickname">
+            Join code
+            <input id="setupRoomCode" maxlength="8" placeholder="ABCD12" autocomplete="off">
           </label>
-          <button class="tonal" type="submit">Join</button>
-          <button id="copyInvite" class="icon-button" type="button" title="Copy invite link" aria-label="Copy invite link">↗</button>
+          <div class="setup-actions">
+            <button id="hostRoom" class="primary" type="button">Host</button>
+            <button id="joinRoom" class="tonal" type="submit">Join</button>
+          </div>
         </form>
       </section>
 
-      <section class="game-layout">
-        <aside class="panel lobby-panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">Seats</p>
-              <h2>Players and AI</h2>
+      <section id="gameShell" class="hidden">
+        <section class="top-bar">
+          <div>
+            <p class="eyebrow">Live room</p>
+            <h1>Ludo</h1>
+            <p class="subtitle">Online rooms with AI players ready to fill every empty seat.</p>
+          </div>
+          <div class="room-form">
+            <div class="identity-pill">
+              <span>Playing as</span>
+              <strong id="playerNameDisplay">Player</strong>
             </div>
-            <button id="startGame" class="primary" type="button">Start</button>
-          </div>
-          <div id="seats" class="seats"></div>
-          <div class="room-card">
-            <span>Room code</span>
-            <strong id="roomBadge">PLAY</strong>
-          </div>
-          <div class="action-row">
-            <button id="resetGame" class="text-button" type="button">Reset room</button>
-            <span id="connectionStatus" class="status-chip">Connecting</span>
-          </div>
-        </aside>
-
-        <section class="board-stage" aria-label="Ludo board">
-          <div id="board" class="board"></div>
-          <div class="turn-card">
-            <div>
-              <p class="eyebrow">Turn</p>
-              <h2 id="turnLabel">Waiting</h2>
-              <p id="turnHint" class="turn-hint">Join a room to begin.</p>
-            </div>
-            <button id="rollDice" class="dice-button" type="button" aria-label="Roll dice">
-              <span id="diceValue" class="dice-face" data-value="0">Roll</span>
-            </button>
+            <button id="copyInvite" class="icon-button" type="button" title="Copy invite link" aria-label="Copy invite link">↗</button>
+            <button id="leaveRoom" class="tonal" type="button">Leave</button>
           </div>
         </section>
 
-        <aside class="panel log-panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">Match</p>
-              <h2>Activity</h2>
+        <section class="game-layout">
+          <aside class="panel lobby-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Seats</p>
+                <h2>Players and AI</h2>
+              </div>
+              <button id="startGame" class="primary" type="button">Start</button>
             </div>
-          </div>
-          <ol id="log" class="log"></ol>
-          <div class="rules">
-            <p>Roll a six to leave home. Captures and sixes earn another turn. Safe squares are marked with stars.</p>
-          </div>
-        </aside>
+            <div id="seats" class="seats"></div>
+            <div class="room-card">
+              <span>Room code</span>
+              <strong id="roomBadge">PLAY</strong>
+            </div>
+            <div class="action-row">
+              <button id="resetGame" class="text-button" type="button">Reset room</button>
+              <span id="connectionStatus" class="status-chip">Offline</span>
+            </div>
+          </aside>
+
+          <section class="board-stage" aria-label="Ludo board">
+            <div id="board" class="board"></div>
+            <div class="turn-card">
+              <div>
+                <p class="eyebrow">Turn</p>
+                <h2 id="turnLabel">Waiting</h2>
+                <p id="turnHint" class="turn-hint">Join a room to begin.</p>
+              </div>
+              <button id="rollDice" class="dice-button" type="button" aria-label="Roll dice">
+                <span id="diceValue" class="dice-face" data-value="0">Roll</span>
+              </button>
+            </div>
+          </section>
+
+          <aside class="panel log-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Match</p>
+                <h2>Activity</h2>
+              </div>
+            </div>
+            <ol id="log" class="log"></ol>
+            <div class="rules">
+              <p>Roll a six to leave home. Captures and sixes earn another turn. Safe squares are marked with stars.</p>
+            </div>
+          </aside>
+        </section>
       </section>
+
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
       <div id="celebration" class="celebration" aria-hidden="true"></div>
     </main>

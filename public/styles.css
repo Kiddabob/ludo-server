@@ -540,6 +540,69 @@ input:focus {
   transform: translate(-50%, 0);
 }
 
+.setup-screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+  gap: 24px;
+  align-items: center;
+  min-height: calc(100vh - 48px);
+}
+
+.setup-copy {
+  padding: clamp(12px, 4vw, 48px);
+}
+
+.setup-copy h1 {
+  margin-top: 8px;
+  font-size: clamp(4rem, 13vw, 10rem);
+}
+
+.setup-card {
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+  border: 1px solid rgba(217, 222, 232, 0.9);
+  border-radius: 32px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: var(--shadow-strong);
+  backdrop-filter: blur(24px);
+}
+
+.setup-card input {
+  width: 100%;
+}
+
+.setup-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.identity-pill {
+  display: grid;
+  gap: 2px;
+  min-height: 46px;
+  border-radius: 999px;
+  padding: 8px 16px;
+  background: #f4f7fb;
+}
+
+.identity-pill span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.identity-pill strong {
+  line-height: 1;
+}
+
+.hidden {
+  display: none !important;
+}
+
 .celebration {
   position: fixed;
   inset: 0;
@@ -579,6 +642,7 @@ input:focus {
   }
 
   .top-bar,
+  .setup-screen,
   .room-form,
   .panel-heading,
   .action-row {
@@ -586,9 +650,23 @@ input:focus {
     flex-direction: column;
   }
 
+  .setup-screen {
+    display: flex;
+    justify-content: center;
+    min-height: calc(100vh - 24px);
+  }
+
+  .setup-copy {
+    padding: 8px;
+  }
+
   input,
   .room-form button {
     width: 100%;
+  }
+
+  .setup-actions {
+    grid-template-columns: 1fr;
   }
 
   .board {
