@@ -20,10 +20,10 @@ const MIME_TYPES = {
 };
 
 const players = [
-  { id: "red", name: "Ruby", color: "#ea4335", start: 0, entry: 50, home: [52, 53, 54, 55, 56, 57] },
-  { id: "blue", name: "Azure", color: "#4285f4", start: 13, entry: 11, home: [58, 59, 60, 61, 62, 63] },
-  { id: "yellow", name: "Sunny", color: "#fbbc04", start: 26, entry: 24, home: [64, 65, 66, 67, 68, 69] },
-  { id: "green", name: "Jade", color: "#34a853", start: 39, entry: 37, home: [70, 71, 72, 73, 74, 75] }
+  { id: "red", name: "Ruby", color: "#ea4335", start: 1, entry: 50, home: [52, 53, 54, 55, 56, 57] },
+  { id: "blue", name: "Azure", color: "#4285f4", start: 14, entry: 11, home: [58, 59, 60, 61, 62, 63] },
+  { id: "yellow", name: "Sunny", color: "#fbbc04", start: 27, entry: 24, home: [64, 65, 66, 67, 68, 69] },
+  { id: "green", name: "Jade", color: "#34a853", start: 40, entry: 37, home: [70, 71, 72, 73, 74, 75] }
 ];
 
 const safeSquares = new Set([0, 8, 13, 21, 26, 34, 39, 47]);

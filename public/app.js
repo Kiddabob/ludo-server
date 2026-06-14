@@ -12,6 +12,7 @@ const defaultPalette = [
 ];
 
 const board = document.querySelector("#board");
+let tokenLayer;
 const seatsEl = document.querySelector("#seats");
 const logEl = document.querySelector("#log");
 const turnLabel = document.querySelector("#turnLabel");
@@ -143,6 +144,10 @@ function createBoard() {
       board.appendChild(cell);
     }
   }
+  tokenLayer = document.createElement("div");
+  tokenLayer.id = "tokenLayer";
+  tokenLayer.className = "token-layer";
+  board.appendChild(tokenLayer);
 }
 
 function connect(room) {
@@ -369,10 +374,10 @@ function renderSeats() {
 
 function renderTokens() {
   const previousRects = new Map();
-  board.querySelectorAll(".token").forEach((token) => {
+  tokenLayer.querySelectorAll(".token").forEach((token) => {
     previousRects.set(token.dataset.tokenId, token.getBoundingClientRect());
   });
-  board.querySelectorAll(".token-stack").forEach((stack) => stack.remove());
+  tokenLayer.innerHTML = "";
   clearLandingPreview();
   const stacks = new Map();
   const moves = availableMoves();
@@ -391,6 +396,7 @@ function renderTokens() {
     if (!cell) continue;
     const stack = document.createElement("div");
     stack.className = "token-stack";
+    placeOverlayItem(stack, cell);
     stack.style.setProperty("--stack-count", tokens.length);
     tokens.forEach((item, index) => {
       const token = document.createElement("button");
@@ -408,7 +414,7 @@ function renderTokens() {
       token.addEventListener("click", () => send({ type: "move", token: item.token }));
       stack.appendChild(token);
     });
-    cell.appendChild(stack);
+    tokenLayer.appendChild(stack);
   }
 
   animateMovedTokens(previousRects);
@@ -502,15 +508,16 @@ function showLandingPreview(move) {
   const preview = document.createElement("div");
   preview.className = "landing-preview";
   preview.style.background = colorFor(move.playerId);
-  cell.appendChild(preview);
+  placeOverlayItem(preview, cell);
+  tokenLayer.appendChild(preview);
 }
 
 function clearLandingPreview() {
-  board.querySelectorAll(".landing-preview").forEach((preview) => preview.remove());
+  tokenLayer?.querySelectorAll(".landing-preview").forEach((preview) => preview.remove());
 }
 
 function animateMovedTokens(previousRects) {
-  board.querySelectorAll(".token").forEach((token) => {
+  tokenLayer.querySelectorAll(".token").forEach((token) => {
     const previous = previousRects.get(token.dataset.tokenId);
     if (!previous) return;
     const next = token.getBoundingClientRect();
@@ -526,6 +533,13 @@ function animateMovedTokens(previousRects) {
       easing: "cubic-bezier(0.2, 0, 0, 1)"
     });
   });
+}
+
+function placeOverlayItem(item, cell) {
+  item.style.left = `${cell.offsetLeft}px`;
+  item.style.top = `${cell.offsetTop}px`;
+  item.style.width = `${cell.offsetWidth}px`;
+  item.style.height = `${cell.offsetHeight}px`;
 }
 
 function movementPathFor(tokenId, finalRect) {
@@ -600,7 +614,7 @@ function getSessionId() {
 
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  themeToggleButton.textContent = theme === "dark" ? "Light" : "Dark";
+  document.querySelector("#themeIcon").textContent = theme === "dark" ? "light_mode" : "dark_mode";
   localStorage.setItem("ludoTheme", theme);
 }
 
